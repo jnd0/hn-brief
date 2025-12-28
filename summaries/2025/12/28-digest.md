@@ -1,6 +1,28 @@
 # HN Daily Digest - 2025-12-28
 
-Digest generation failed.
+The highest-rated story this week is a minimalist web tool called Calendar, which generates a single-page, printable calendar for an entire year. It's designed for long-term habit tracking and planning, with customization options via URL parameters for year, weekend highlighting, and layout alignment. This tool exemplifies a growing preference for digital minimalism and physical planning in an era of overwhelming app notifications.
+
+In web development, a compelling argument is made for replacing JavaScript with modern HTML elements. The article demonstrates how native features like `<details>` for accordions, `<datalist>` for autocomplete, the Popover API for modals, and the `:has()` pseudo-class for state management can handle many interactive patterns without complex frameworks. This "start simple" philosophy challenges the default reliance on heavy JavaScript tooling, suggesting that the platform's built-in capabilities are often sufficient for common UI needs.
+
+Parallel to this, a piece on functional programming advocates for Algebraic Data Types (ADTs) to enforce reliability in critical systems. By designing data structures that make illegal states unrepresentable, developers can leverage compilers to prevent entire classes of bugs before runtime. This approach is presented as essential for industries like banking and telecom, where runtime failures are unacceptable.
+
+The macOS ecosystem faces sharp criticism in a retrospective of 2025's software decline. The author lambasts the "Liquid Glass" design language in macOS 26 "Tahoe" for prioritizing aesthetics over usability, citing excessive whitespace, poor contrast, and disruptive animations. Forced updates that break professional workflows are highlighted as evidence that Apple now prioritizes marketing and VisionOS integration over power user needs. In a more constructive vein, a developer built a native macOS app to detect thermal throttling by monitoring CPU frequency and thermal pressure states, releasing it as open-source—a niche tool born from Apple's failure to provide transparent performance metrics.
+
+Artificial intelligence dominates two contrasting narratives. An analysis of "AI slop" reveals a flood of low-quality, algorithmically generated videos on YouTube, driven by the low cost of production and ad revenue incentives. This "race to the bottom" threatens human creators, with India, Spain, and the US identified as major sources. Meanwhile, public skepticism is quantified in a Pew report showing 63% of Americans expect AI to cause major harm within two decades, particularly fearing its impact on elections and healthcare. The gap between expert optimism and public concern is stark.
+
+In biology, two studies challenge simplistic genetic models. One explores how paternal lifestyle choices—diet, stress, chemical exposures—can leave epigenetic imprints via RNA in sperm, influencing offspring traits in mice. The other details a CRISPR-engineered "Trojan horse" therapy where modified fat cells, expressing UCP1, compete with tumors for nutrients, slowing cancer growth in mice. Both suggest that heredity extends beyond DNA sequences.
+
+A memoir from "Factory 404," a secret Chinese nuclear city in the Gobi Desert, offers a haunting glimpse into Cold War-era isolation. The author describes a surreal childhood where elite scientists and laborers lived in a place erased from maps, juxtaposing the adults' burden of secrecy with the children's innocence amidst nuclear reactors.
+
+The open-source world faces a maintenance crisis, as the original maintainer of Mockito, a critical Java mocking framework, steps down after a decade. Burnout and Java ecosystem shifts—specifically JEP 451 blocking dynamic agent loading—forced a major rewrite, highlighting the unsustainable burden on volunteer maintainers. This mirrors a broader industry trend where critical infrastructure relies on unpaid labor.
+
+Emerging hardware constraints threaten consumer tech: a global memory shortage is projected for 2026, driven by AI's insatiable demand for High Bandwidth Memory (HBM). Silicon wafer capacity is being diverted from consumer devices to GPUs, potentially shrinking smartphone and PC markets while raising prices. This zero-sum reallocation underscores how AI's growth directly strains traditional tech sectors.
+
+Nostalgia for the early internet resurfaces with "Dialtone," an emulator that revives the AOL 3.0 server experience, complete with period-accurate software and a curated walled garden. It joins resources like Scratchapixel (free computer graphics fundamentals) and PySDR (a Python guide to software-defined radio) in offering foundational knowledge outside corporate-controlled platforms.
+
+A pragmatic take on software engineering careers argues that engineers should adopt "clear-eyed cynicism." Idealism about corporate motives is naive; companies prioritize profit, executives are self-interested, and organizations are inefficient. The advice is to navigate this reality pragmatically—translate business goals into technical work while subtly steering outcomes—rather than burning out on disillusionment.
+
+Finally, a technical deep dive explains C++'s RAII (Resource Acquisition Is Initialization) as its equivalent to `try...finally`, using destructors to guarantee cleanup. This contrasts with managed languages and underscores C++'s philosophy of deterministic resource handling. Meanwhile, a naval analyst dismisses a proposed US "battleship" as a fantasy design, arguing that modern missile-focused ships are battle cruisers at best, not the throwbacks the term implies.
 
 ---
 
