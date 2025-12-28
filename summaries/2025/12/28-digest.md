@@ -4,4 +4,4 @@ Digest generation failed.
 
 ---
 
-*This digest summarizes 15 stories from Hacker News.*
+*This digest summarizes 20 stories from Hacker News.*
