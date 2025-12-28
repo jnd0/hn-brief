@@ -205,7 +205,9 @@ async function loadArchiveIndex() {
 
         if (initialDate) {
             currentDate = initialDate;
-            loadSummary(initialDate);
+            // Preload both modes in parallel, then display current mode
+            await preloadDate(initialDate);
+            displayCurrentMode();
         } else {
             contentDiv.innerHTML = '<p class="error">No summaries available yet.</p>';
         }
@@ -215,55 +217,85 @@ async function loadArchiveIndex() {
     }
 }
 
-async function loadSummary(date) {
-    loadingDiv.style.display = 'block';
-    contentDiv.innerHTML = '';
-    currentDate = date;
-
-    const url = new URL(window.location);
-    url.searchParams.set('date', date);
-    url.searchParams.set('mode', currentMode);
-    window.history.pushState({}, '', url);
-
-    // Build path: summaries/YYYY/MM/DD.md or DD-digest.md
+// Helper to get file paths for a date
+function getFilePaths(date) {
     const [year, month, day] = date.split('-');
-    const filename = currentMode === 'digest' ? `${day}-digest.md` : `${day}.md`;
-    const filePath = `summaries/${year}/${month}/${filename}`;
+    return {
+        articles: `summaries/${year}/${month}/${day}.md`,
+        digest: `summaries/${year}/${month}/${day}-digest.md`
+    };
+}
 
-    try {
-        // Use cache if available
-        let md = fileCache[filePath];
-        if (!md) {
-            const res = await fetch(filePath);
-            if (!res.ok) throw new Error("Summary not found");
-            md = await res.text();
-            fileCache[filePath] = md;
-        }
+// Preload both article and digest for a date (parallel fetch)
+async function preloadDate(date) {
+    const paths = getFilePaths(date);
+    const fetches = [];
 
-        if (currentMode === 'articles') {
-            const stories = parseArticleMarkdown(md);
-            contentDiv.innerHTML = renderStories(stories);
-        } else {
-            const html = marked.parse(md);
-            contentDiv.innerHTML = `<div class="digest-content">${html}</div>`;
-        }
-    } catch (error) {
-        if (currentMode === 'digest') {
-            contentDiv.innerHTML = `<p class="error">No digest available for ${date}.</p>`;
-        } else {
-            contentDiv.innerHTML = `<p class="error">Error loading summary for ${date}.</p>`;
-        }
-    } finally {
-        loadingDiv.style.display = 'none';
+    if (!fileCache[paths.articles]) {
+        fetches.push(
+            fetch(paths.articles)
+                .then(r => r.ok ? r.text() : null)
+                .then(md => { if (md) fileCache[paths.articles] = md; })
+        );
+    }
+    if (!fileCache[paths.digest]) {
+        fetches.push(
+            fetch(paths.digest)
+                .then(r => r.ok ? r.text() : null)
+                .then(md => { if (md) fileCache[paths.digest] = md; })
+        );
+    }
+    await Promise.all(fetches);
+}
+
+// Display content for current mode (assumes data is cached or handles missing)
+function displayCurrentMode() {
+    const paths = getFilePaths(currentDate);
+    const filePath = currentMode === 'digest' ? paths.digest : paths.articles;
+    const md = fileCache[filePath];
+
+    if (!md) {
+        contentDiv.innerHTML = currentMode === 'digest'
+            ? `<p class="error">No digest available for ${currentDate}.</p>`
+            : `<p class="error">No articles available for ${currentDate}.</p>`;
+        return;
+    }
+
+    if (currentMode === 'articles') {
+        const stories = parseArticleMarkdown(md);
+        contentDiv.innerHTML = renderStories(stories);
+    } else {
+        const html = marked.parse(md);
+        contentDiv.innerHTML = `<div class="digest-content">${html}</div>`;
     }
 }
 
+// Update URL to reflect current state
+function updateUrl() {
+    const url = new URL(window.location);
+    url.searchParams.set('date', currentDate);
+    url.searchParams.set('mode', currentMode);
+    window.history.pushState({}, '', url);
+}
+
+// Load and display a date (used by calendar picker)
+async function loadSummary(date) {
+    currentDate = date;
+    updateUrl();
+    await preloadDate(date);
+    displayCurrentMode();
+    loadingDiv.style.display = 'none';
+}
+
+// Switch between article and digest modes
 function setMode(mode) {
     currentMode = mode;
     btnArticles.classList.toggle('active', mode === 'articles');
     btnDigest.classList.toggle('active', mode === 'digest');
-    if (currentDate) loadSummary(currentDate);
+    updateUrl();
+    displayCurrentMode();
 }
+
 
 // Event Listeners
 btnArticles.addEventListener('click', () => setMode('articles'));
