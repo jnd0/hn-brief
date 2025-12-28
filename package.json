@@ -1,0 +1,23 @@
+{
+  "name": "hn-brief",
+  "description": "AI-powered daily summaries of Hacker News stories and discussions",
+  "version": "1.0.0",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "summarize": "bun run scripts/summarizer.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251224.0",
+    "@types/bun": "latest",
+    "autoprefixer": "^10.4.23",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.18"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "marked": "^17.0.1"
+  }
+}

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FAQ | HN-Brief</title>
+    <meta name="description"
+        content="Frequently asked questions about HN-Brief - how stories are selected, how summaries are generated, and more.">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://hn-brief.com/pages/faq.html">
+    <link rel="icon" type="image/png" href="/assets/favicon.png">
+    <meta name="theme-color" content="#FF6600">
+    <link rel="stylesheet" href="/assets/style.css">
+</head>
+
+<body>
+    <div class="page-wrapper">
+        <header class="hn-header">
+            <table class="header-table">
+                <tr>
+                    <td class="header-logo">
+                        <a href="/">
+                            <svg width="18" height="18" viewBox="0 0 18 18">
+                                <rect width="18" height="18" fill="#FF6600" />
+                                <text x="50%" y="50%" dominant-baseline="central" text-anchor="middle"
+                                    font-family="Verdana" font-size="7" font-weight="bold" fill="white">HNB</text>
+                            </svg>
+                        </a>
+                    </td>
+                    <td class="header-nav">
+                        <b><a href="/">HN-Brief</a></b>
+                    </td>
+                </tr>
+            </table>
+        </header>
+
+        <main class="container info-page">
+            <h1>Frequently Asked Questions</h1>
+
+            <h2>What is HN-Brief?</h2>
+            <p>HN-Brief provides AI-generated daily summaries of <a href="https://news.ycombinator.com">Hacker News</a>
+                stories and discussions. It's designed for busy tech professionals who want to stay informed without
+                spending hours reading.</p>
+
+            <h2>How are stories selected?</h2>
+            <p>We fetch the top 20 stories from Hacker News each day, ranked by points. This ensures you see the most
+                popular and engaged-with content from the community.</p>
+
+            <h2>How are summaries generated?</h2>
+            <p>Summaries are generated using AI (via <a href="https://openrouter.ai">OpenRouter</a>). The AI reads both
+                the linked article and the top comments, then produces a concise summary of each.</p>
+
+            <h2>What's the difference between Articles and Digest mode?</h2>
+            <p><strong>Articles</strong> shows individual story summaries with scores and comment counts.
+                <strong>Digest</strong> weaves all stories into a cohesive daily newsletter-style narrative.
+            </p>
+
+            <h2>How often is it updated?</h2>
+            <p>Summaries are generated every 2 hours via a Cloudflare Worker, ensuring you always have current content.
+            </p>
+
+            <h2>Can I access past summaries?</h2>
+            <p>Yes! Click the calendar icon (📅) to browse summaries from previous days.</p>
+
+            <h2>Is this affiliated with Y Combinator?</h2>
+            <p>No. HN-Brief is an independent project. Data is sourced from the <a href="https://hn.algolia.com/api">HN
+                    Algolia API</a>.</p>
+
+            <h2>Is the source code available?</h2>
+            <p>Yes! HN-Brief is open source: <a href="https://github.com/jnd0/hn-brief">github.com/jnd0/hn-brief</a></p>
+        </main>
+
+        <footer class="hn-footer">
+            <a href="/">Home</a> |
+            <a href="/pages/faq.html">FAQ</a> |
+            <a href="/pages/about.html">About</a>
+        </footer>
+    </div>
+</body>
+
+</html>

@@ -1,0 +1,607 @@
+/* HN-Brief - Hacker News Style CSS */
+
+/* Reset */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: Verdana, Geneva, sans-serif;
+    font-size: 10pt;
+    background-color: #F6F6EF;
+    color: #000;
+}
+
+/* Page wrapper - constrains content width */
+.page-wrapper {
+    width: 85%;
+    max-width: 1200px;
+    margin: 0 auto;
+    background-color: #F6F6EF;
+    position: relative;
+}
+
+/* Header Bar - Exact HN compact style */
+.hn-header {
+    background-color: #FF6600;
+    padding: 2px 4px;
+}
+
+.header-table {
+    width: 100%;
+    border-collapse: collapse;
+    border-spacing: 0;
+}
+
+.header-table td {
+    padding: 0;
+    vertical-align: middle;
+}
+
+.header-logo {
+    width: 18px;
+    padding-right: 4px !important;
+}
+
+.header-logo svg {
+    border: 1px solid white;
+    display: block;
+}
+
+.header-nav {
+    font-size: 10pt;
+}
+
+.header-nav b a {
+    color: #000;
+    text-decoration: none;
+}
+
+.nav-links {
+    font-size: 10pt;
+    padding-left: 8px;
+}
+
+.nav-links a {
+    color: #000;
+    text-decoration: none;
+}
+
+.nav-links a:hover {
+    text-decoration: underline;
+}
+
+.header-controls {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.mode-toggle {
+    display: inline-flex;
+    gap: 0;
+    margin-right: 8px;
+}
+
+.mode-toggle button {
+    font-family: Verdana, Geneva, sans-serif;
+    font-size: 8pt;
+    padding: 0 4px;
+    border: 1px solid #000;
+    background: #fff;
+    cursor: pointer;
+    line-height: 16px;
+}
+
+.mode-toggle button:first-child {
+    border-radius: 2px 0 0 2px;
+}
+
+.mode-toggle button:last-child {
+    border-radius: 0 2px 2px 0;
+    border-left: none;
+}
+
+.mode-toggle button.active {
+    background: #000;
+    color: #fff;
+}
+
+/* Calendar Button */
+.calendar-btn {
+    font-size: 10pt;
+    padding: 0 4px;
+    border: 1px solid #000;
+    background: #fff;
+    cursor: pointer;
+    line-height: 16px;
+    border-radius: 2px;
+}
+
+.calendar-btn:hover {
+    background: #eee;
+}
+
+/* Calendar Popup */
+.calendar-popup {
+    position: absolute;
+    right: 0;
+    top: 26px;
+    background: #F6F6EF;
+    border: 1px solid #FF6600;
+    padding: 8px;
+    z-index: 100;
+    width: 220px;
+    font-size: 8pt;
+}
+
+.calendar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    font-weight: bold;
+}
+
+.cal-nav {
+    font-size: 8pt;
+    padding: 2px 6px;
+    border: 1px solid #828282;
+    background: #fff;
+    cursor: pointer;
+    border-radius: 2px;
+}
+
+.cal-nav:hover {
+    background: #eee;
+}
+
+.calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+    margin-bottom: 4px;
+}
+
+.cal-day-header {
+    text-align: center;
+    font-weight: bold;
+    color: #828282;
+    font-size: 7pt;
+    padding: 2px 0;
+}
+
+.calendar-days {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+}
+
+.cal-day {
+    text-align: center;
+    padding: 4px 2px;
+    cursor: default;
+    color: #ccc;
+    font-size: 8pt;
+    border-radius: 2px;
+}
+
+.cal-day.available {
+    color: #000;
+    cursor: pointer;
+    background: #fff;
+    border: 1px solid #ddd;
+}
+
+.cal-day.available:hover {
+    background: #FF6600;
+    color: #fff;
+    border-color: #FF6600;
+}
+
+.cal-day.selected {
+    background: #FF6600;
+    color: #fff;
+    border-color: #FF6600;
+}
+
+.cal-day.today {
+    font-weight: bold;
+}
+
+/* Main Content Area */
+.container {
+    padding-top: 10px;
+}
+
+/* Story List */
+.itemlist {
+    padding: 0;
+}
+
+.athing {
+    display: flex;
+    align-items: baseline;
+}
+
+.rank {
+    color: #828282;
+    font-size: 10pt;
+    text-align: right;
+    width: 25px;
+    flex-shrink: 0;
+    padding-right: 5px;
+}
+
+.titleline {
+    font-size: 10pt;
+}
+
+.titleline>a {
+    color: #000;
+    text-decoration: none;
+}
+
+.titleline>a:visited {
+    color: #828282;
+}
+
+.titleline>a:hover {
+    text-decoration: underline;
+}
+
+.sitebit {
+    font-size: 8pt;
+    color: #828282;
+}
+
+.sitebit a {
+    color: #828282;
+    text-decoration: none;
+}
+
+.sitebit a:hover {
+    text-decoration: underline;
+}
+
+/* Inline subtext (compact mode) */
+.subtext-inline {
+    font-size: 8pt;
+    color: #828282;
+    margin-left: 6px;
+}
+
+.subtext-inline a,
+.subtext-link {
+    color: #828282;
+    text-decoration: none;
+}
+
+.subtext-inline a:hover,
+.subtext-link:hover {
+    text-decoration: underline;
+}
+
+/* Subtext line (points, comments) - kept for compatibility */
+.subtext {
+    font-size: 7pt;
+    color: #828282;
+    padding-left: 25px;
+    padding-top: 1px;
+    padding-bottom: 4px;
+}
+
+.subtext a {
+    color: #828282;
+    text-decoration: none;
+}
+
+.subtext a:hover {
+    text-decoration: underline;
+}
+
+.score {
+    color: #828282;
+}
+
+/* Summary Section */
+.summary-row {
+    padding-left: 25px;
+    padding-bottom: 12px;
+}
+
+.summary-content {
+    font-size: 9pt;
+    color: #000;
+    line-height: 14pt;
+}
+
+.summary-label {
+    color: #828282;
+    font-weight: bold;
+    font-size: 8pt;
+}
+
+.summary-block {
+    margin-bottom: 5px;
+}
+
+/* Digest Mode */
+.digest-content {
+    font-size: 10pt;
+    line-height: 16pt;
+    padding: 5px 0;
+}
+
+.digest-content p {
+    margin-bottom: 10px;
+    text-indent: 0;
+}
+
+.digest-content h1 {
+    font-size: 10pt;
+    font-weight: bold;
+    margin-bottom: 8px;
+    color: #000;
+}
+
+/* Footer */
+.hn-footer {
+    padding: 8px 0;
+    text-align: center;
+    font-size: 8pt;
+    color: #828282;
+    border-top: 2px solid #FF6600;
+    margin-top: 15px;
+}
+
+.hn-footer a {
+    color: #828282;
+    text-decoration: none;
+}
+
+.hn-footer a:hover {
+    text-decoration: underline;
+}
+
+/* Info Pages (FAQ, About) */
+.info-page {
+    padding: 20px;
+    max-width: 600px;
+}
+
+.info-page h1 {
+    font-size: 13pt;
+    font-weight: bold;
+    margin-bottom: 20px;
+    color: #000;
+}
+
+.info-page h2 {
+    font-size: 10pt;
+    font-weight: bold;
+    margin-top: 20px;
+    margin-bottom: 8px;
+    color: #000;
+}
+
+.info-page p {
+    font-size: 10pt;
+    line-height: 1.6;
+    margin-bottom: 10px;
+    color: #000;
+}
+
+.info-page ul {
+    font-size: 10pt;
+    line-height: 1.6;
+    margin-left: 20px;
+    margin-bottom: 10px;
+}
+
+.info-page a {
+    color: #000;
+}
+
+.info-page a:hover {
+    text-decoration: underline;
+}
+
+/* Utility */
+.loading,
+.error {
+    padding: 10px 0;
+    color: #828282;
+}
+
+.error {
+    color: #ff0000;
+}
+
+/* ========== Mobile Responsive Styles ========== */
+@media screen and (max-width: 768px) {
+
+    /* Wider content on mobile */
+    .page-wrapper {
+        width: 100%;
+        padding: 0;
+    }
+
+    /* Header - match HN mobile */
+    .hn-header {
+        padding: 4px 8px;
+    }
+
+    .header-table {
+        display: block;
+    }
+
+    .header-table tr {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+
+    .header-logo {
+        width: auto;
+        padding-right: 6px !important;
+    }
+
+    .header-nav {
+        flex: 1;
+    }
+
+    .header-nav b {
+        font-size: 13pt;
+    }
+
+    .nav-links {
+        display: block;
+        font-size: 9pt;
+        padding-left: 0;
+        margin-top: 2px;
+    }
+
+    .header-controls {
+        position: absolute;
+        right: 8px;
+        top: 6px;
+    }
+
+    .mode-toggle button {
+        font-size: 9pt;
+        padding: 2px 8px;
+        line-height: 20px;
+    }
+
+    .calendar-btn {
+        font-size: 12pt;
+        padding: 2px 8px;
+        line-height: 20px;
+    }
+
+    /* Calendar popup - position on mobile */
+    .calendar-popup {
+        right: 8px;
+        width: 280px;
+    }
+
+    .cal-day {
+        padding: 8px 4px;
+        font-size: 10pt;
+    }
+
+    /* Content area */
+    .container {
+        padding: 8px;
+    }
+
+    /* Story items - match HN mobile */
+    .athing {
+        flex-wrap: wrap;
+    }
+
+    .rank {
+        width: 22px;
+        font-size: 11pt;
+        padding-right: 4px;
+    }
+
+    .titleline {
+        font-size: 13pt;
+        line-height: 1.4;
+        flex: 1;
+    }
+
+    .sitebit {
+        display: inline;
+        font-size: 10pt;
+    }
+
+    .subtext-inline {
+        display: block;
+        font-size: 10pt;
+        margin-left: 22px;
+        margin-top: 2px;
+    }
+
+    /* Legacy subtext - hidden since we use inline now */
+    .subtext {
+        display: none;
+    }
+
+    /* Summary sections */
+    .summary-row {
+        padding-left: 22px;
+        padding-right: 8px;
+        padding-bottom: 16px;
+    }
+
+    .summary-content {
+        font-size: 11pt;
+        line-height: 1.5;
+    }
+
+    .summary-label {
+        font-size: 10pt;
+    }
+
+    .summary-block {
+        margin-bottom: 8px;
+    }
+
+    /* Digest mode */
+    .digest-content {
+        font-size: 12pt;
+        line-height: 1.6;
+        padding: 8px;
+    }
+
+    .digest-content h1 {
+        font-size: 13pt;
+        margin-bottom: 12px;
+    }
+
+    .digest-content p {
+        margin-bottom: 14px;
+    }
+
+    /* Footer */
+    .hn-footer {
+        padding: 12px 8px;
+        font-size: 9pt;
+    }
+}
+
+/* Extra small screens (phones in portrait) */
+@media screen and (max-width: 480px) {
+    .header-nav b {
+        font-size: 12pt;
+    }
+
+    .nav-links {
+        font-size: 8pt;
+    }
+
+    .header-controls {
+        position: static;
+        width: 100%;
+        margin-top: 4px;
+        display: flex;
+        justify-content: flex-start;
+        gap: 8px;
+    }
+
+    .titleline {
+        font-size: 12pt;
+    }
+
+    .summary-content {
+        font-size: 10pt;
+    }
+
+    .digest-content {
+        font-size: 11pt;
+    }
+}
