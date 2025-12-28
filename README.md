@@ -1,6 +1,17 @@
 # HN-Brief
 
-![alt text](image.png)AI-powered daily summaries of Hacker News stories and discussions.
+**AI-powered daily summaries of Hacker News stories and discussions.**
+
+Too busy to scroll through Hacker News every day? HN-Brief automatically fetches the top 20 stories, summarizes each article and its discussion using AI, and generates a cohesive daily digest all hosted as a simple static site.
+
+🔗 **Live site**: [hn-brief.com](https://hn-brief.com)
+
+## How It Works
+
+1. **Fetch** — A Cloudflare Worker runs every 2 hours, pulling the top stories from the [HN Algolia API](https://hn.algolia.com/api).
+2. **Summarize** — Each story + its comments are sent to an LLM (via [OpenRouter](https://openrouter.ai)).
+3. **Digest** — All summaries are combined into a single, flowing narrative for quick reading.
+4. **Publish** — The Worker commits the markdown files directly to GitHub, triggering a Cloudflare Pages redeploy.
 
 ## Features
 
@@ -112,18 +123,6 @@ hn-brief/
             └── DD-digest.md
 ```
 
-### archive.json
-
-The `archive.json` file is a manifest that tells the frontend which dates have summaries:
-
-```json
-[
-  { "date": "2025-12-27", "hasDigest": true, "storyCount": 20 },
-  { "date": "2025-12-26", "hasDigest": true, "storyCount": 20 }
-]
-```
-
-**Why it exists:** Static sites can't list directory contents, so the calendar UI needs this index to know which dates are clickable. It's auto-updated by the summarizer when generating new summaries.
 
 ## Contributing
 

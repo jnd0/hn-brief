@@ -7,7 +7,7 @@ interface Env {
     REPO_NAME: string;
 }
 
-const ALGOLIA_API = "http://hn.algolia.com/api/v1";
+const ALGOLIA_API = "https://hn.algolia.com/api/v1";
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 // Post type detection
@@ -67,7 +67,7 @@ async function generateDailySummary(env: Env) {
 
     console.log(`Generating summary for ${date}`);
 
-    // 1. Fetch Stories (top 20 by points)
+    // 1. Fetch Stories (top 20 by points - exactly 49 subrequests, at the limit!)
     const stories = await fetchTopStories();
     const top20 = stories.slice(0, 20);
 

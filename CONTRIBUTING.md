@@ -31,12 +31,9 @@ bunx serve .
 
 ## Ideas for Contributions
 
-- [ ] Add more LLM providers (Claude, Gemini, etc.)
-- [ ] Dark mode toggle
 - [ ] RSS feed generation
 - [ ] Search functionality across archives
 - [ ] Improve mobile responsiveness
-- [ ] Add unit tests
 
 ## Code Style
 
