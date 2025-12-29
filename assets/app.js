@@ -197,7 +197,11 @@ async function loadArchiveIndex() {
         const dates = archiveData.map(e => typeof e === 'string' ? e : e.date);
         const initialDate = dates.includes(queryDate) ? queryDate : dates[0];
 
-        if (queryMode === 'digest') {
+        if (queryMode === 'articles') {
+            currentMode = 'articles';
+            btnArticles.classList.add('active');
+            btnDigest.classList.remove('active');
+        } else if (queryMode === 'digest') {
             currentMode = 'digest';
             btnDigest.classList.add('active');
             btnArticles.classList.remove('active');
@@ -205,9 +209,7 @@ async function loadArchiveIndex() {
 
         if (initialDate) {
             currentDate = initialDate;
-            // Preload both modes in parallel, then display current mode
-            await preloadDate(initialDate);
-            displayCurrentMode();
+            await fetchAndDisplayDate(initialDate);
         } else {
             contentDiv.innerHTML = '<p class="error">No summaries available yet.</p>';
         }
@@ -226,26 +228,23 @@ function getFilePaths(date) {
     };
 }
 
-// Preload both article and digest for a date (parallel fetch)
-async function preloadDate(date) {
+// Fetch current mode, display, and preload other in background
+async function fetchAndDisplayDate(date) {
     const paths = getFilePaths(date);
-    const fetches = [];
+    const currentPath = currentMode === 'digest' ? paths.digest : paths.articles;
+    const otherPath = currentMode === 'digest' ? paths.articles : paths.digest;
 
-    if (!fileCache[paths.articles]) {
-        fetches.push(
-            fetch(paths.articles)
-                .then(r => r.ok ? r.text() : null)
-                .then(md => { if (md) fileCache[paths.articles] = md; })
-        );
+    // Fetch current mode if not cached
+    if (!fileCache[currentPath]) {
+        const res = await fetch(currentPath);
+        if (res.ok) fileCache[currentPath] = await res.text();
     }
-    if (!fileCache[paths.digest]) {
-        fetches.push(
-            fetch(paths.digest)
-                .then(r => r.ok ? r.text() : null)
-                .then(md => { if (md) fileCache[paths.digest] = md; })
-        );
+    displayCurrentMode();
+
+    // Background preload other mode
+    if (!fileCache[otherPath]) {
+        fetch(otherPath).then(r => r.ok ? r.text() : null).then(md => { if (md) fileCache[otherPath] = md; });
     }
-    await Promise.all(fetches);
 }
 
 // Display content for current mode (assumes data is cached or handles missing)
@@ -282,8 +281,7 @@ function updateUrl() {
 async function loadSummary(date) {
     currentDate = date;
     updateUrl();
-    await preloadDate(date);
-    displayCurrentMode();
+    await fetchAndDisplayDate(date);
     loadingDiv.style.display = 'none';
 }
 

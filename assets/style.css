@@ -41,13 +41,14 @@ body {
 }
 
 .header-logo {
-    width: 18px;
-    padding-right: 4px !important;
+    width: 1%;
+    padding-right: 8px;
 }
 
 .header-logo svg {
     border: 1px solid white;
     display: block;
+    margin-right: 4px;
 }
 
 .header-nav {
@@ -428,57 +429,75 @@ body {
         padding: 0;
     }
 
-    /* Header - match HN mobile */
     .hn-header {
-        padding: 4px 8px;
+        padding: 4px 6px;
+        overflow: hidden;
     }
 
     .header-table {
         display: block;
+        width: 100%;
     }
 
+    .header-table tbody,
     .header-table tr {
         display: flex;
-        flex-wrap: wrap;
         align-items: center;
+        width: 100%;
+    }
+
+    .header-table td {
+        display: block;
+        padding: 0;
     }
 
     .header-logo {
-        width: auto;
-        padding-right: 6px !important;
+        width: auto !important;
+        flex-shrink: 0;
+        padding-right: 4px !important;
+    }
+
+    .header-logo svg {
+        width: 18px;
+        height: 18px;
     }
 
     .header-nav {
-        flex: 1;
+        flex-shrink: 0;
+        margin-right: auto;
     }
 
     .header-nav b {
-        font-size: 13pt;
+        font-size: 11pt;
+        white-space: nowrap;
     }
 
     .nav-links {
-        display: block;
-        font-size: 9pt;
-        padding-left: 0;
-        margin-top: 2px;
+        display: none;
     }
 
     .header-controls {
-        position: absolute;
-        right: 8px;
-        top: 6px;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        margin-left: 8px;
+    }
+
+    .mode-toggle {
+        margin-right: 0;
     }
 
     .mode-toggle button {
-        font-size: 9pt;
-        padding: 2px 8px;
-        line-height: 20px;
+        font-size: 8pt;
+        padding: 2px 6px;
+        line-height: 16px;
     }
 
     .calendar-btn {
-        font-size: 12pt;
-        padding: 2px 8px;
-        line-height: 20px;
+        font-size: 11pt;
+        padding: 2px 4px;
+        line-height: 16px;
     }
 
     /* Calendar popup - position on mobile */
@@ -521,8 +540,8 @@ body {
 
     .subtext-inline {
         display: block;
-        font-size: 10pt;
-        margin-left: 22px;
+        font-size: 8pt;
+        margin-left: 0;
         margin-top: 2px;
     }
 
@@ -584,13 +603,19 @@ body {
         font-size: 8pt;
     }
 
+    /* Keep controls on same line, just reduce sizes */
     .header-controls {
-        position: static;
-        width: 100%;
-        margin-top: 4px;
-        display: flex;
-        justify-content: flex-start;
-        gap: 8px;
+        gap: 2px;
+    }
+
+    .mode-toggle button {
+        font-size: 7pt;
+        padding: 2px 4px;
+    }
+
+    .calendar-btn {
+        font-size: 10pt;
+        padding: 2px 3px;
     }
 
     .titleline {
