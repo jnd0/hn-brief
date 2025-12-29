@@ -1,0 +1,23 @@
+# HN Daily Digest - 2025-09-18
+
+The Slack price hike saga is a brutal reminder that SaaS vendors are not your friends. When Hack Club faced a sudden 40x cost increase—from $5k to $200k annually—with a week's notice before data deletion, it crystallized the classic bait-and-switch: hook users with sweet deals, embed deeply into workflows, then jack up prices once switching costs become prohibitive. Hacker News predictably erupted in "I told you so" sentiment, championing self-hosted alternatives like Mattermost or Zulip while lamenting how non-technical leadership often dismisses in-house solutions as "uncool" compared to cloud services. This isn't just about Slack; it's a microcosm of the broader cloud vs. self-hosting war, where convenience today becomes existential risk tomorrow.  
+
+This vendor lock-in anxiety extends beyond storage and chat. The EFF's piece on Meta's "content jail" exposes how opaque, automated moderation creates a two-tier system: average users beg for mercy on Twitter while insiders bypass the queue. It's the same power imbalance—platforms hold all the cards, and recourse is a luxury. Apple's new SSH-before-unlock feature for FileVault is a rare counterpoint, finally enabling true headless Mac server management by using SSH credentials to decrypt volumes. It’s a nod to admin sanity, though it raises eyebrows about pre-boot attack surfaces (mitigated, as commenters noted, by VPNs).  
+
+Meanwhile, Meta’s AI ambitions face a credibility crisis. The Ray-Ban Display glasses—$799 for an EMG wristband that lets you… check messages without your phone—landed with a thud. HN saw it as a solution in search of a problem, especially after a live demo spectacularly failed when pre-recorded audio played ahead of on-stage actions. The cringe was palpable, with users comparing it to a Black Mirror episode and questioning whether billionaire whims are driving AI hype over genuine utility. Google’s "Learn Your Way" AI textbook project drew similar skepticism, dismissed as EdTech fluff that ignores pedagogy’s core challenges (like fixing misconceptions) in favor of flashy personalization.  
+
+In desktop land, KDE’s resurgence highlights a hunger for user control. A long-time GNOME convert praised its customizability and workflow flexibility, though HN veterans split on stability—some called it "bomb-proof," others decried Qt dependency hell and flickering bugs. It’s the eternal trade-off: polish vs. power, with KDE 4.0’s ghost still haunting perceptions.  
+
+Nostalgia and whimsy offered respite. CERN’s "Animal Shelter for Computer Mice" (2011) charmed users with its retro, soulful design, sparking laments about today’s sterile web. Similarly, the SimCity 2000 reflection resonated—how aging turns power fantasies into urban planning therapy. On the playful side, the "un-screenshotable" text illusion (using motion-based noise) and the "Scream cipher" (Unicode diacritic substitution) showcased clever hacks, though both were quickly dissected for flaws (screen recordings bypass the former; it’s trivial to crack the latter).  
+
+Hardware hacks contrasted sharply with corporate offerings. The Flipper Zero Geiger counter module—DIY radiation detection with exposed high-voltage risks—embodied tinkering ethos but faced critiques about safety and value (why not buy a pre-built device?). Meanwhile, Meta’s Ray-Ban demo underscored how corporate hardware often feels disconnected from real needs.  
+
+Resource politics surfaced too. American Prairie’s 70k-acre acquisition to restore public access in Montana was hailed as a win against billionaire land hoarding, though debates flared over property rights and whether the UK’s right-of-way model is superior. Parallelly, analysis suggesting the U.S. has ample critical minerals—but outsources refining due to environmental costs—highlighted a strategic failure: we’ve offshored pollution and now scramble to reshore it.  
+
+Finally, TernFS—XTX Markets’ exabyte-scale filesystem—impressed engineers with its metadata specialization for immutable files, though its niche focus (no tiny files) and GPL licensing sparked technical comparisons to Ceph and SeaweedFS.  
+
+**Worth watching**: Whether Slack’s pricing backlash fuels a broader exodus to self-hosted tools, and if Meta’s AI hardware can escape its "solution in search of a problem" trap before the next demo fails.
+
+---
+
+*This digest summarizes the top 20 stories from Hacker News.*

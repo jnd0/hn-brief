@@ -1,61 +1,53 @@
-import { join } from "path";
-import { writeFile, mkdir } from "fs/promises";
-import { parseArgs } from "util";
+/**
+ * HN-Brief Local Summarizer Script
+ * 
+ * Use this for batch processing, backfills, and local testing.
+ * Run with: bun run scripts/summarizer.ts [options]
+ */
 
+import { mkdir } from "fs/promises";
+import {
+  type ProcessedStory,
+  type LLMConfig,
+  type AlgoliaHit,
+  fetchTopStories,
+  fetchStoryDetails,
+  summarizeStory,
+  generateDigest,
+  formatArticleMarkdown,
+  formatDigestMarkdown,
+  getPostTypeLabel
+} from '../shared/summarizer-core';
+
+// ============================================================================
 // Configuration
-const ALGOLIA_API = "http://hn.algolia.com/api/v1";
+// ============================================================================
 
 // LLM Provider Configuration
-// Priority: OpenRouter > Kimi > OpenAI-compatible
+// Priority: OpenRouter > OpenAI-compatible
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL;
-const KIMI_API_KEY = process.env.KIMI_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 // Determine which API to use
 const USE_OPENROUTER = !!OPENROUTER_API_KEY;
-const API_KEY = OPENROUTER_API_KEY || KIMI_API_KEY || OPENAI_API_KEY;
-const API_URL = USE_OPENROUTER
-  ? "https://openrouter.ai/api/v1/chat/completions"
-  : "https://api.moonshot.cn/v1/chat/completions";
-const MODEL = USE_OPENROUTER
-  ? OPENROUTER_MODEL
-  : "moonshot-v1-8k";
+const API_KEY = OPENROUTER_API_KEY || OPENAI_API_KEY;
+const API_URL = "https://openrouter.ai/api/v1/chat/completions";
+const MODEL = OPENROUTER_MODEL;
 
-// Post type detection
-type PostType = 'article' | 'ask_hn' | 'show_hn' | 'tell_hn' | 'launch_hn';
+// Create LLM config
+const llmConfig: LLMConfig = {
+  apiKey: API_KEY || '',
+  apiUrl: API_URL,
+  model: MODEL || 'xiaomi/mimo-v2-flash:free'
+};
 
-function detectPostType(title: string): PostType {
-  const lowerTitle = title.toLowerCase();
-  if (lowerTitle.startsWith('ask hn:') || lowerTitle.startsWith('ask hn ')) return 'ask_hn';
-  if (lowerTitle.startsWith('show hn:') || lowerTitle.startsWith('show hn ')) return 'show_hn';
-  if (lowerTitle.startsWith('tell hn:') || lowerTitle.startsWith('tell hn ')) return 'tell_hn';
-  if (lowerTitle.startsWith('launch hn:') || lowerTitle.startsWith('launch hn ')) return 'launch_hn';
-  return 'article';
-}
+console.log(`Using ${USE_OPENROUTER ? 'OpenRouter' : 'OpenAI'} with model: ${MODEL}`);
 
-function getPostTypeLabel(type: PostType): string {
-  switch (type) {
-    case 'ask_hn': return 'Question';
-    case 'show_hn': return 'Project';
-    case 'tell_hn': return 'Post';
-    case 'launch_hn': return 'Launch';
-    default: return 'Article';
-  }
-}
-
-interface ProcessedStory {
-  id: string;
-  title: string;
-  url: string;
-  points: number;
-  num_comments: number;
-  summary: string;
-  discussion_summary: string;
-  postType: PostType;
-}
-
+// ============================================================================
 // CLI Arguments
+// ============================================================================
+
 interface CLIOptions {
   date?: string;
   month?: string;  // YYYY-MM format
@@ -112,217 +104,10 @@ Examples:
 `);
 }
 
-console.log(`Using ${USE_OPENROUTER ? 'OpenRouter' : 'Kimi'} with model: ${MODEL}`);
+// ============================================================================
+// Date Utilities (local script specific)
+// ============================================================================
 
-// 1. Fetch Front Page Stories (supports date filter)
-async function fetchTopStories(date?: string) {
-  console.log("Fetching front page stories...");
-
-  // For specific date, search for top stories from that day
-  // Note: front_page tag only works for current stories, so we search by date + sort by points
-  if (date) {
-    const startTimestamp = Math.floor(new Date(date + 'T00:00:00Z').getTime() / 1000);
-    const endTimestamp = startTimestamp + 86400; // +24 hours
-
-    // Search for stories from that date - fetch more, then filter to top by points
-    // Using points>10 to exclude very low engagement posts while still getting enough results
-    const url = `${ALGOLIA_API}/search?tags=story&numericFilters=created_at_i>=${startTimestamp},created_at_i<${endTimestamp},points>10&hitsPerPage=50`;
-    const res = await fetch(url);
-    const data = await res.json() as any;
-
-    // Sort by points descending and take top 20
-    const sortedHits = (data.hits || []).sort((a: any, b: any) => (b.points || 0) - (a.points || 0));
-    return sortedHits.slice(0, 20);
-  }
-
-  // Default: today's front page (last 24h)
-  // Modified to be explicit about time range to avoid old stories via "front_page" tag
-  console.log("   Fetching top stories from the last 24 hours...");
-  const now = Math.floor(Date.now() / 1000);
-  const yesterday = now - 86400;
-
-  const url = `${ALGOLIA_API}/search?tags=story&numericFilters=created_at_i>${yesterday},points>10&hitsPerPage=50`;
-  const res = await fetch(url);
-  const data = await res.json() as any;
-  const hits = data.hits || [];
-  return hits.sort((a: any, b: any) => (b.points || 0) - (a.points || 0)).slice(0, 20);
-}
-
-// 2. Fetch Story Details & Comments
-async function fetchStoryDetails(storyId: string) {
-  const res = await fetch(`${ALGOLIA_API}/items/${storyId}`);
-  return await res.json();
-}
-
-// 3. Summarize the story and its comments
-async function summarizeStory(story: any, comments: any[]): Promise<ProcessedStory> {
-  const postType = detectPostType(story.title);
-  const typeLabel = getPostTypeLabel(postType);
-
-  // Flatten comments for context (heuristic: top 10 top-level comments + 1 nested level)
-  const commentText = comments.slice(0, 10).map((c: any) => {
-    return `- ${c.author}: ${c.text} \n` + (c.children || []).slice(0, 2).map((child: any) => `  - ${child.author}: ${child.text}`).join("\n");
-  }).join("\n\n");
-
-  // Adjust prompt based on post type
-  const isSelfPost = postType !== 'article';
-  const contentDescription = isSelfPost
-    ? `This is a ${typeLabel} post (self-post with text content, no external article).`
-    : `This links to an external article.`;
-
-  const summaryInstruction = isSelfPost
-    ? `Summarize the author's main point/question from the post text below.`
-    : `Provide a concise summary of what the linked article is about (infer from title, URL, and discussion if needed).`;
-
-  const prompt = `
-  Analyze this Hacker News ${typeLabel.toLowerCase()} and its discussion.
-  
-  ${contentDescription}
-  
-  Title: ${story.title}
-  URL: ${story.url || 'N/A (self-post)'}
-  Post Text: ${story.text || 'N/A'}
-  
-  Top Comments:
-  ${commentText}
-  
-  ${summaryInstruction}
-  Also summarize the discussion (consensus, disagreements, key insights). 
-  Write in a high-quality, objective, slightly cynical but informed tone typical of a senior engineer.
-  
-  Format:
-  <Content Summary>
-  [Your ${typeLabel.toLowerCase()} summary here]
-  </Content Summary>
-  <Discussion Summary>
-  [Your discussion summary here]
-  </Discussion Summary>
-  `;
-
-  if (!API_KEY) {
-    return {
-      id: story.objectID,
-      title: story.title,
-      url: story.url || `https://news.ycombinator.com/item?id=${story.objectID}`,
-      points: story.points,
-      num_comments: story.num_comments,
-      summary: `Simulation: API Key missing. ${typeLabel} summary would go here.`,
-      discussion_summary: "Simulation: Discussion summary would go here.",
-      postType
-    };
-  }
-
-  try {
-    const response = await fetch(API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${API_KEY}`
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: [
-          { role: "system", content: "You are a helpful assistant summarizing Hacker News." },
-          { role: "user", content: prompt }
-        ],
-        temperature: 0.3
-      })
-    });
-
-    const result = await response.json() as any;
-    const content = result.choices?.[0]?.message?.content || "";
-
-    // Parse with new tags
-    const contentMatch = content.match(/<Content Summary>([\s\S]*?)<\/Content Summary>/);
-    const discussionMatch = content.match(/<Discussion Summary>([\s\S]*?)<\/Discussion Summary>/);
-
-    return {
-      id: story.objectID,
-      title: story.title,
-      url: story.url || `https://news.ycombinator.com/item?id=${story.objectID}`,
-      points: story.points,
-      num_comments: story.num_comments,
-      summary: contentMatch ? contentMatch[1].trim() : "Failed to parse summary.",
-      discussion_summary: discussionMatch ? discussionMatch[1].trim() : "Failed to parse discussion.",
-      postType
-    };
-
-  } catch (error) {
-    console.error(`Failed to summarize ${story.title}:`, error);
-    return {
-      id: story.objectID,
-      title: story.title,
-      url: story.url || `https://news.ycombinator.com/item?id=${story.objectID}`,
-      points: story.points,
-      num_comments: story.num_comments,
-      summary: "Error generating summary.",
-      discussion_summary: "Error generating discussion summary.",
-      postType
-    };
-  }
-}
-
-// 4. Generate Digest Summary (all articles into one cohesive summary)
-async function generateDigest(stories: ProcessedStory[]): Promise<string> {
-  const storiesContext = stories.map((s, i) =>
-    `${i + 1}. "${s.title}" (${s.points} points, ${s.num_comments} comments, type: ${getPostTypeLabel(s.postType)})\n   Summary: ${s.summary}\n   Discussion: ${s.discussion_summary}`
-  ).join("\n\n");
-
-  const prompt = `
-  You are writing a daily Hacker News digest for busy tech professionals.
-  
-  Here are today's top stories with their individual summaries:
-  ${storiesContext}
-  
-  Write a cohesive, engaging 15-20 paragraph digest that:
-  1. Opens with the most significant/interesting story of the day (jump straight into it)
-  2. Groups related topics together
-  3. Highlights interesting patterns or themes
-  4. Maintains a smart, cynical, insider tone (like a senior engineer talking to another)
-  5. Ends with a brief "worth watching" note
-  
-  CRITICAL STYLE RULES:
-  - NO "Good morning", "Grab your coffee", "Welcome back", or other fluff.
-  - NO generic intros like "Today on Hacker News..."
-  - Start directly with the first story/topic.
-  - No bullet points or headers. flowing prose only.
-  `;
-
-  if (!API_KEY) {
-    return "Simulation: API Key missing. Digest would go here.";
-  }
-
-  try {
-    const response = await fetch(API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${API_KEY}`
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: [
-          { role: "system", content: "You are a tech journalist writing a daily Hacker News digest." },
-          { role: "user", content: prompt }
-        ],
-        temperature: 0.5,
-        max_tokens: 4000,
-        // Re-enabling reasoning based on documentation for MiMo-V2-Flash
-        reasoning: {
-          enabled: true
-        }
-      })
-    });
-
-    const result = await response.json() as any;
-    return result.choices?.[0]?.message?.content || "Failed to generate digest.";
-  } catch (error) {
-    console.error("Failed to generate digest:", error);
-    return "Error generating digest.";
-  }
-}
-
-// Helper: Generate dates for a month
 function getDatesInMonth(yearMonth: string): string[] {
   const parts = yearMonth.split('-').map(Number);
   const year = parts[0] ?? 0;
@@ -340,7 +125,6 @@ function getDatesInMonth(yearMonth: string): string[] {
   return dates;
 }
 
-// Helper: Generate dates for a year
 function getDatesInYear(year: string): string[] {
   const dates: string[] = [];
   const today = new Date().toISOString().split('T')[0] ?? '';
@@ -352,7 +136,10 @@ function getDatesInYear(year: string): string[] {
   return dates.filter(d => d <= today);
 }
 
-// Process a single date
+// ============================================================================
+// Processing Functions
+// ============================================================================
+
 async function processDate(date: string, mode: string): Promise<{ date: string; storyCount: number }> {
   const [year, month, day] = date.split('-');
   const folderPath = `summaries/${year}/${month}`;
@@ -368,17 +155,21 @@ async function processDate(date: string, mode: string): Promise<{ date: string; 
 
   console.log(`   Found ${stories.length} stories, fetching details in parallel...`);
 
-  // Fetch all story details in PARALLEL (fast!)
+  // Fetch all story details in PARALLEL
   const storyDetails = await Promise.all(
-    stories.map(async (hit: any) => {
-      const details = await fetchStoryDetails(hit.objectID) as any;
+    stories.map(async (hit: AlgoliaHit) => {
+      const details = await fetchStoryDetails(hit.objectID);
       return { hit, details };
     })
   );
   console.log(`   Fetched all details, now summarizing...`);
 
-  // Process LLM calls in BATCHES of 10 (parallel within batch, sequential between batches)
-  // This respects OpenRouter's 20 req/min limit while being much faster
+  // Check for API key
+  if (!API_KEY) {
+    console.log(`   ⚠️ No API key found, running in simulation mode`);
+  }
+
+  // Process LLM calls in BATCHES of 10
   const BATCH_SIZE = 10;
   const processedStories: ProcessedStory[] = [];
 
@@ -388,7 +179,7 @@ async function processDate(date: string, mode: string): Promise<{ date: string; 
 
     const batchResults = await Promise.all(
       batch.map(async ({ hit, details }) => {
-        const summary = await summarizeStory(hit, details.children || []);
+        const summary = await summarizeStory(hit, details.children || [], llmConfig);
         return summary;
       })
     );
@@ -406,25 +197,15 @@ async function processDate(date: string, mode: string): Promise<{ date: string; 
 
   // Generate Article Mode Markdown
   if (mode === 'all' || mode === 'articles') {
-    let articleMd = `# Hacker News Summary - ${date}\n\n`;
-    for (const s of processedStories) {
-      const typeLabel = getPostTypeLabel(s.postType);
-      articleMd += `## [${s.title}](${s.url})\n`;
-      articleMd += `**Score:** ${s.points} | **Comments:** ${s.num_comments} | **ID:** ${s.id}\n\n`;
-      articleMd += `> **${typeLabel}:** ${s.summary}\n>\n`;
-      articleMd += `> **Discussion:** ${s.discussion_summary}\n\n`;
-      articleMd += `---\n\n`;
-    }
+    const articleMd = formatArticleMarkdown(processedStories, date);
     await Bun.write(`${folderPath}/${day}.md`, articleMd);
     console.log(`   ✅ Saved articles`);
   }
 
   // Generate Digest Mode
   if (mode === 'all' || mode === 'digest') {
-    const digestContent = await generateDigest(processedStories);
-    let digestMd = `# HN Daily Digest - ${date}\n\n`;
-    digestMd += digestContent;
-    digestMd += `\n\n---\n\n*This digest summarizes the top ${processedStories.length} stories from Hacker News.*`;
+    const digestContent = await generateDigest(processedStories, llmConfig);
+    const digestMd = formatDigestMarkdown(digestContent, date, processedStories.length);
     await Bun.write(`${folderPath}/${day}-digest.md`, digestMd);
     console.log(`   ✅ Saved digest`);
   }
@@ -432,7 +213,91 @@ async function processDate(date: string, mode: string): Promise<{ date: string; 
   return { date, storyCount: processedStories.length };
 }
 
-// 5. Main Loop
+// ============================================================================
+// Archive Management
+// ============================================================================
+
+async function updateArchive(results: { date: string; storyCount: number }[], mode: string) {
+  const archivePath = "summaries/archive.json";
+  let archive: any[] = [];
+
+  try {
+    const file = await Bun.file(archivePath).text();
+    archive = JSON.parse(file);
+  } catch (e) {
+    // File doesn't exist yet
+  }
+
+  // Add/update entries for processed dates
+  for (const result of results) {
+    if (result.storyCount === 0) continue;
+
+    const existingIndex = archive.findIndex((entry: any) =>
+      typeof entry === "string" ? entry === result.date : entry.date === result.date
+    );
+
+    const newEntry = {
+      date: result.date,
+      hasDigest: mode === 'all' || mode === 'digest',
+      storyCount: result.storyCount
+    };
+
+    if (existingIndex === -1) {
+      archive.push(newEntry);
+    } else {
+      archive[existingIndex] = newEntry;
+    }
+  }
+
+  // Scan for existing files not in archive
+  try {
+    const { readdir } = await import('fs/promises');
+    const baseDir = 'summaries';
+    const years = await readdir(baseDir);
+
+    for (const year of years) {
+      if (!year.match(/^\d{4}$/)) continue;
+      const months = await readdir(`${baseDir}/${year}`);
+
+      for (const month of months) {
+        if (!month.match(/^\d{2}$/)) continue;
+        const files = await readdir(`${baseDir}/${year}/${month}`);
+
+        for (const file of files) {
+          const match = file.match(/^(\d{2})\.md$/);
+          if (!match) continue;
+
+          const date = `${year}-${month}-${match[1]}`;
+          const hasDigest = files.includes(`${match[1]}-digest.md`);
+
+          const exists = archive.some((entry: any) =>
+            (typeof entry === 'string' ? entry : entry.date) === date
+          );
+
+          if (!exists) {
+            archive.push({ date, hasDigest, storyCount: 20 });
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Error scanning files:', e);
+  }
+
+  // Normalize and sort
+  archive = archive.map((entry: any) =>
+    typeof entry === 'string' ? { date: entry, hasDigest: false, storyCount: 0 } : entry
+  );
+  archive.sort((a, b) => b.date.localeCompare(a.date));
+
+  await Bun.write(archivePath, JSON.stringify(archive, null, 2));
+  console.log(`\n📋 Updated archive index (${archive.length} total dates).`);
+}
+
+// ============================================================================
+// Main
+// ============================================================================
+
 async function main() {
   const options = parseCliArgs();
 
@@ -464,7 +329,7 @@ async function main() {
       const result = await processDate(date, options.mode || 'all');
       results.push(result);
 
-      // Add small delay between dates to avoid rate limiting
+      // Add delay between dates
       if (datesToProcess.length > 1) {
         await new Promise(r => setTimeout(r, 1000));
       }
@@ -473,84 +338,11 @@ async function main() {
     }
   }
 
-  // Update Archive Index - scan ALL existing files to ensure sync
-  const archivePath = "summaries/archive.json";
-  let archive: any[] = [];
-  try {
-    const file = await Bun.file(archivePath).text();
-    archive = JSON.parse(file);
-  } catch (e) {
-    // File doesn't exist yet
-  }
-
-  // Add/update entries for processed dates
-  for (const result of results) {
-    if (result.storyCount === 0) continue;
-
-    const existingIndex = archive.findIndex((entry: any) =>
-      typeof entry === "string" ? entry === result.date : entry.date === result.date
-    );
-
-    const newEntry = {
-      date: result.date,
-      hasDigest: options.mode === 'all' || options.mode === 'digest',
-      storyCount: result.storyCount
-    };
-
-    if (existingIndex === -1) {
-      archive.push(newEntry);
-    } else {
-      archive[existingIndex] = newEntry;
-    }
-  }
-
-  // Also scan for existing files not in archive (from previous runs)
-  try {
-    const { readdir } = await import('fs/promises');
-    const baseDir = 'summaries';
-    const years = await readdir(baseDir);
-
-    for (const year of years) {
-      if (!year.match(/^\d{4}$/)) continue;
-      const months = await readdir(`${baseDir}/${year}`);
-
-      for (const month of months) {
-        if (!month.match(/^\d{2}$/)) continue;
-        const files = await readdir(`${baseDir}/${year}/${month}`);
-
-        for (const file of files) {
-          const match = file.match(/^(\d{2})\.md$/);
-          if (!match) continue;
-
-          const date = `${year}-${month}-${match[1]}`;
-          const hasDigest = files.includes(`${match[1]}-digest.md`);
-
-          // Check if already in archive
-          const exists = archive.some((entry: any) =>
-            (typeof entry === 'string' ? entry : entry.date) === date
-          );
-
-          if (!exists) {
-            archive.push({ date, hasDigest, storyCount: 20 });
-          }
-        }
-      }
-    }
-  } catch (e) {
-    console.error('Error scanning files:', e);
-  }
-
-  // Normalize all entries to object format and sort by date descending
-  archive = archive.map((entry: any) =>
-    typeof entry === 'string' ? { date: entry, hasDigest: false, storyCount: 0 } : entry
-  );
-  archive.sort((a, b) => b.date.localeCompare(a.date));
-
-  await Bun.write(archivePath, JSON.stringify(archive, null, 2));
+  // Update archive
+  await updateArchive(results, options.mode || 'all');
 
   // Summary
   const successCount = results.filter(r => r.storyCount > 0).length;
-  console.log(`\n📋 Updated archive index (${archive.length} total dates).`);
   console.log(`\n🎉 Done! Processed ${successCount}/${datesToProcess.length} dates.`);
 }
 

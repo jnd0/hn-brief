@@ -56,6 +56,7 @@ function parseArticleMarkdown(md) {
             continue;
         }
 
+        // Handle blockquote lines (summary/discussion starters)
         if (line.startsWith('> ')) {
             const content = line.substring(2);
             // Match dynamic labels: Article, Question, Project, Post, Launch
@@ -66,11 +67,24 @@ function parseArticleMarkdown(md) {
             } else if (content.startsWith('**Discussion:**')) {
                 currentStory.discussion = content.replace('**Discussion:**', '').trim();
             } else if (currentStory) {
+                // Continuation of blockquote - use newline to preserve structure
                 if (currentStory.discussion) {
-                    currentStory.discussion += ' ' + content;
+                    currentStory.discussion += '\n' + content;
                 } else if (currentStory.summary) {
-                    currentStory.summary += ' ' + content;
+                    currentStory.summary += '\n' + content;
                 }
+            }
+        }
+        // Handle list items (not in blockquotes) - these continue the previous section
+        // Supports: * bullet, - bullet (not ---), and numbered lists (1., 2., etc.)
+        const isListItem = line.startsWith('*') ||
+            (line.startsWith('-') && !line.startsWith('---')) ||
+            /^\d+\.\s/.test(line);
+        if (isListItem && currentStory) {
+            if (currentStory.discussion) {
+                currentStory.discussion += '\n' + line;
+            } else if (currentStory.summary) {
+                currentStory.summary += '\n' + line;
             }
         }
     }
@@ -100,11 +114,11 @@ function renderStories(stories) {
             </div>
             <div class="summary-row">
                 <div class="summary-content">
-                    <div class="summary-block">
-                        <span class="summary-label">${story.summaryLabel}:</span> ${marked.parseInline(story.summary)}
+                <div class="summary-block">
+                        <span class="summary-label">${story.summaryLabel}:</span> ${marked.parse(story.summary)}
                     </div>
                     <div class="summary-block">
-                        <span class="summary-label">Discussion:</span> ${marked.parseInline(story.discussion)}
+                        <span class="summary-label">Discussion:</span> ${marked.parse(story.discussion)}
                     </div>
                 </div>
             </div>
