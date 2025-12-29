@@ -61,8 +61,10 @@ export default {
 };
 
 async function generateDailySummary(env: Env) {
+    // Use London timezone for date calculation
     const now = new Date();
-    const date = now.toISOString().split('T')[0] ?? '';
+    const londonDate = now.toLocaleDateString('en-GB', { timeZone: 'Europe/London' }); // YYYY-MM-DD format
+    const date = londonDate;
     const [year, month, day] = date.split('-');
 
     console.log(`Generating summary for ${date}`);
