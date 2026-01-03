@@ -26,15 +26,30 @@ function getDomain(url) {
 }
 
 function parseArticleMarkdown(md) {
-    const lines = md.split('\n');
     const stories = [];
-    let currentStory = null;
+    let story = null;
 
-    for (const line of lines) {
+    // Helper: append text to the current active section (discussion first, then summary)
+    const appendTo = (text, separator = '\n') => {
+        if (!story) return;
+        if (story.discussion) {
+            story.discussion += separator + text;
+        } else if (story.summary) {
+            story.summary += separator + text;
+        }
+    };
+
+    for (const line of md.split('\n')) {
+        // Skip empty lines and separators
+        if (!line.trim() || line.startsWith('---') || line.startsWith('#') && !line.startsWith('## [')) {
+            continue;
+        }
+
+        // New story header: ## [Title](url)
         const titleMatch = line.match(/^## \[(.+?)\]\((.+?)\)/);
         if (titleMatch) {
-            if (currentStory) stories.push(currentStory);
-            currentStory = {
+            if (story) stories.push(story);
+            story = {
                 title: titleMatch[1],
                 url: titleMatch[2],
                 score: 0,
@@ -47,49 +62,45 @@ function parseArticleMarkdown(md) {
             continue;
         }
 
-        // Match meta line with optional ID
+        if (!story) continue;
+
+        // Meta line: **Score:** N | **Comments:** N | **ID:** N
         const metaMatch = line.match(/\*\*Score:\*\* (\d+) \| \*\*Comments:\*\* (\d+)(?:\s*\|\s*\*\*ID:\*\*\s*(\d+))?/);
-        if (metaMatch && currentStory) {
-            currentStory.score = parseInt(metaMatch[1]);
-            currentStory.comments = parseInt(metaMatch[2]);
-            currentStory.hnId = metaMatch[3] || null;
+        if (metaMatch) {
+            story.score = parseInt(metaMatch[1]);
+            story.comments = parseInt(metaMatch[2]);
+            story.hnId = metaMatch[3] || null;
             continue;
         }
 
-        // Handle blockquote lines (summary/discussion starters)
+        // Blockquote lines: > content
         if (line.startsWith('> ')) {
-            const content = line.substring(2);
-            // Match dynamic labels: Article, Question, Project, Post, Launch
+            const content = line.slice(2);
             const labelMatch = content.match(/^\*\*(Article|Question|Project|Post|Launch):\*\*/);
+
             if (labelMatch) {
-                currentStory.summaryLabel = labelMatch[1];
-                currentStory.summary = content.replace(/^\*\*(Article|Question|Project|Post|Launch):\*\*/, '').trim();
+                story.summaryLabel = labelMatch[1];
+                story.summary = content.replace(labelMatch[0], '').trim();
             } else if (content.startsWith('**Discussion:**')) {
-                currentStory.discussion = content.replace('**Discussion:**', '').trim();
-            } else if (currentStory) {
-                // Continuation of blockquote - use newline to preserve structure
-                if (currentStory.discussion) {
-                    currentStory.discussion += '\n' + content;
-                } else if (currentStory.summary) {
-                    currentStory.summary += '\n' + content;
-                }
+                story.discussion = content.replace('**Discussion:**', '').trim();
+            } else {
+                appendTo(content);
             }
+            continue;
         }
-        // Handle list items (not in blockquotes) - these continue the previous section
-        // Supports: * bullet, - bullet (not ---), and numbered lists (1., 2., etc.)
-        const isListItem = line.startsWith('*') ||
-            (line.startsWith('-') && !line.startsWith('---')) ||
-            /^\d+\.\s/.test(line);
-        if (isListItem && currentStory) {
-            if (currentStory.discussion) {
-                currentStory.discussion += '\n' + line;
-            } else if (currentStory.summary) {
-                currentStory.summary += '\n' + line;
-            }
+
+        // List items (bullets or numbered)
+        const isListItem = /^(\*|-(?!--)|\d+\.)\s/.test(line);
+        if (isListItem) {
+            appendTo(line);
+            continue;
         }
+
+        // Plain text continuation paragraphs
+        appendTo(line.trim(), '\n\n');
     }
 
-    if (currentStory) stories.push(currentStory);
+    if (story) stories.push(story);
     return stories;
 }
 
