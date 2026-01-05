@@ -23,13 +23,13 @@ export default {
 
         // CORS preflight
         if (request.method === "OPTIONS") {
-            return handleCors();
+            return handleCors(env);
         }
 
         // Route: GET /tts/:date
         const match = url.pathname.match(/^\/tts\/(\d{4}-\d{2}-\d{2})$/);
         if (!match) {
-            return corsResponse(new Response("Not found", { status: 404 }));
+            return corsResponse(new Response("Not found", { status: 404 }), env);
         }
 
         const date = match[1] as string;
@@ -41,13 +41,13 @@ export default {
                     "Content-Type": "audio/wav",
                     "Cache-Control": "public, max-age=31536000", // 1 year (content-addressed)
                 }
-            }));
+            }), env);
         } catch (error) {
             console.error("TTS error:", error);
             return corsResponse(new Response(
                 JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
                 { status: 500, headers: { "Content-Type": "application/json" } }
-            ));
+            ), env);
         }
     }
 };
@@ -135,9 +135,12 @@ function stripMarkdown(text: string): string {
 // ============================================================================
 
 async function generateSpeech(text: string, env: Env): Promise<Uint8Array> {
-    const response = await fetch(`${GEMINI_TTS_URL}?key=${env.GEMINI_API_KEY}`, {
+    const response = await fetch(GEMINI_TTS_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": env.GEMINI_API_KEY
+        },
         body: JSON.stringify({
             contents: [{
                 parts: [{ text: `Read this news digest in an informative, clear tone:\n\n${text}` }]
@@ -177,10 +180,7 @@ async function generateSpeech(text: string, env: Env): Promise<Uint8Array> {
 
     // Decode Base64 to binary
     const binaryString = atob(audioBase64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-    }
+    const bytes = Uint8Array.from(binaryString, c => c.charCodeAt(0));
 
     return bytes;
 }
@@ -235,19 +235,19 @@ function writeString(view: DataView, offset: number, str: string): void {
 // CORS Helpers
 // ============================================================================
 
-function handleCors(): Response {
+function handleCors(env: Env): Response {
     return new Response(null, {
         headers: {
-            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Origin": env.SITE_ORIGIN,
             "Access-Control-Allow-Methods": "GET, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type",
         }
     });
 }
 
-function corsResponse(response: Response): Response {
+function corsResponse(response: Response, env: Env): Response {
     const newHeaders = new Headers(response.headers);
-    newHeaders.set("Access-Control-Allow-Origin", "*");
+    newHeaders.set("Access-Control-Allow-Origin", env.SITE_ORIGIN);
     return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,

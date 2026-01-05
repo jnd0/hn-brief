@@ -89,7 +89,7 @@ function parseArticleMarkdown(md) {
             continue;
         }
 
-        // List items (bullets ornumbered)
+        // List items (bullets or numbered)
         const isListItem = /^(\*|-(?!--)|\d+\.)\s/.test(line);
         if (isListItem) {
             appendTo(line);
@@ -381,7 +381,10 @@ document.addEventListener('click', (e) => {
 // Audio Player for TTS
 // ============================================================================
 
-const TTS_WORKER_URL = 'http://localhost:8787'; // Local testing - change to deployed URL for production
+// Detect environment and set TTS worker URL accordingly
+const TTS_WORKER_URL = window.location.hostname === 'localhost'
+    ? 'http://localhost:8787'
+    : 'https://hn-brief-tts.jnd0.workers.dev'; // Update with your deployed worker URL
 let audioPlayer = null;
 let isPlaying = false;
 let isLoading = false;
