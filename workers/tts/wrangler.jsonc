@@ -1,0 +1,17 @@
+{
+    "name": "hn-brief-tts",
+    "main": "index.ts",
+    "compatibility_date": "2025-01-01",
+    "r2_buckets": [
+        {
+            "binding": "TTS_AUDIO",
+            "bucket_name": "hn-brief-audio"
+        }
+    ],
+    "vars": {
+        "SITE_ORIGIN": "https://hn-brief.com"
+    },
+    "observability": {
+        "enabled": true
+    }
+}

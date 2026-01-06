@@ -394,6 +394,133 @@ body {
     text-decoration: underline;
 }
 
+/* Digest Header Container */
+.digest-header-container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    line-height: 1;
+    /* Reset line-height for better centering */
+}
+
+.digest-header-container h1 {
+    margin-bottom: 0;
+    margin-right: 20px;
+    line-height: 1;
+    /* Ensure text creates tight bounding box */
+    font-size: 13pt;
+}
+
+/* Audio Player Bar */
+.audio-player {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.audio-play-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1.5px solid #333;
+    background: transparent;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    padding: 0;
+}
+
+.audio-play-btn:hover {
+    border-color: #FF6600;
+}
+
+.audio-play-btn.playing {
+    border-color: #FF6600;
+}
+
+.play-icon {
+    font-size: 10px;
+    margin-left: 1px;
+    /* Optical adjustment for play triangle */
+    line-height: 1;
+}
+
+.audio-time {
+    font-size: 10pt;
+    color: #828282;
+    min-width: 45px;
+    font-family: Verdana, Geneva, sans-serif;
+}
+
+.audio-slider {
+    flex: 1;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: #ddd;
+    border-radius: 2px;
+    cursor: pointer;
+}
+
+.audio-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #333;
+    cursor: pointer;
+}
+
+.audio-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #333;
+    cursor: pointer;
+    border: none;
+}
+
+.audio-speed-btn {
+    font-family: Verdana, Geneva, sans-serif;
+    font-size: 10pt;
+    padding: 4px 0;
+    /* Removing side padding, using width to control size */
+    width: 45px;
+    /* Fixed width to accommodate '1.25x' without shifting */
+    text-align: right;
+    /* Align right to match edge, or center? Right looks cleaner with 1x vs 1.25x */
+    border: none;
+    background: transparent;
+    color: #828282;
+    cursor: pointer;
+}
+
+.audio-speed-btn:hover {
+    color: #333;
+}
+
+.audio-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid #333;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 /* Info Pages (FAQ, About) */
 .info-page {
     padding: 20px;

@@ -291,6 +291,31 @@ function displayCurrentMode() {
     } else {
         const html = marked.parse(md);
         contentDiv.innerHTML = `<div class="digest-content">${html}</div>`;
+
+        // Insert audio player bar aligned with H1
+        const h1 = contentDiv.querySelector('h1');
+        if (h1) {
+            const headerContainer = document.createElement('div');
+            headerContainer.className = 'digest-header-container';
+
+            // Move H1 into container
+            h1.parentNode.insertBefore(headerContainer, h1);
+            headerContainer.appendChild(h1);
+
+            const audioBar = document.createElement('div');
+            audioBar.className = 'audio-player';
+            audioBar.innerHTML = `
+                <button class="audio-play-btn" id="audio-play-btn" title="Play">
+                    <span class="play-icon">▶</span>
+                </button>
+                <span class="audio-time" id="audio-current">0:00</span>
+                <input type="range" class="audio-slider" id="audio-slider" min="0" max="100" value="0">
+                <span class="audio-time" id="audio-duration">0:00</span>
+                <button class="audio-speed-btn" id="audio-speed-btn">1×</button>
+            `;
+            headerContainer.appendChild(audioBar);
+        }
+        initAudioPlayer();
     }
 }
 
@@ -304,6 +329,7 @@ function updateUrl() {
 
 // Load and display a date (used by calendar picker)
 async function loadSummary(date) {
+    resetAudioPlayer();
     currentDate = date;
     updateUrl();
     await fetchAndDisplayDate(date);
@@ -312,6 +338,7 @@ async function loadSummary(date) {
 
 // Switch between article and digest modes
 function setMode(mode) {
+    resetAudioPlayer();
     currentMode = mode;
     btnArticles.classList.toggle('active', mode === 'articles');
     btnDigest.classList.toggle('active', mode === 'digest');
@@ -349,6 +376,173 @@ document.addEventListener('click', (e) => {
         calendarPopup.style.display = 'none';
     }
 });
+
+// ============================================================================
+// Audio Player for TTS
+// ============================================================================
+
+// Detect environment and set TTS worker URL accordingly
+const TTS_WORKER_URL = window.location.hostname === 'localhost'
+    ? 'http://localhost:8787'
+    : 'https://hn-brief-tts.jnd0.workers.dev'; // Update with your deployed worker URL
+let audioPlayer = null;
+let isPlaying = false;
+let isLoading = false;
+
+function initAudioPlayer() {
+    const playBtn = document.getElementById('audio-play-btn');
+    const currentSpan = document.getElementById('audio-current');
+    const durationSpan = document.getElementById('audio-duration');
+    const slider = document.getElementById('audio-slider');
+    const speedBtn = document.getElementById('audio-speed-btn');
+
+    if (!playBtn) return;
+
+    // Speed cycle: 1 → 1.25 → 1.5 → 2 → 1
+    const speeds = [1, 1.25, 1.5, 2];
+    let speedIndex = 0;
+
+    // Speed cycle
+    speedBtn.addEventListener('click', () => {
+        speedIndex = (speedIndex + 1) % speeds.length;
+        const newSpeed = speeds[speedIndex];
+        speedBtn.textContent = newSpeed === 1 ? '1×' : newSpeed + '×';
+        if (audioPlayer) {
+            audioPlayer.playbackRate = newSpeed;
+        }
+    });
+
+    let isDragging = false;
+
+    // Slider scrubbing logic
+    // 1. Dragging start
+    slider.addEventListener('mousedown', () => isDragging = true);
+    slider.addEventListener('touchstart', () => isDragging = true);
+
+    // 2. Dragging (visual update only)
+    slider.addEventListener('input', () => {
+        isDragging = true;
+        if (audioPlayer && audioPlayer.duration) {
+            const seekTime = (slider.value / 100) * audioPlayer.duration;
+            currentSpan.textContent = formatTime(seekTime);
+        }
+    });
+
+    // 3. Dragging end (commit seek)
+    slider.addEventListener('change', () => {
+        if (audioPlayer && audioPlayer.duration) {
+            audioPlayer.currentTime = (slider.value / 100) * audioPlayer.duration;
+        }
+        isDragging = false;
+    });
+
+    // Ensure state resets on mouseup even if not moved
+    slider.addEventListener('mouseup', () => isDragging = false);
+    slider.addEventListener('touchend', () => isDragging = false);
+
+
+    playBtn.addEventListener('click', async () => {
+        if (isLoading) return;
+
+        if (audioPlayer && isPlaying) {
+            audioPlayer.pause();
+            isPlaying = false;
+            updatePlayButton(playBtn, 'paused');
+            return;
+        }
+
+        if (audioPlayer && !isPlaying) {
+            audioPlayer.play();
+            isPlaying = true;
+            updatePlayButton(playBtn, 'playing');
+            return;
+        }
+
+        // First play - fetch audio
+        isLoading = true;
+        updatePlayButton(playBtn, 'loading');
+
+        try {
+            const audioUrl = `${TTS_WORKER_URL}/tts/${currentDate}`;
+            audioPlayer = new Audio(audioUrl);
+
+            audioPlayer.addEventListener('loadedmetadata', () => {
+                durationSpan.textContent = formatTime(audioPlayer.duration);
+            });
+
+            audioPlayer.addEventListener('timeupdate', () => {
+                // Only update slider if user is NOT dragging it
+                if (!isDragging) {
+                    currentSpan.textContent = formatTime(audioPlayer.currentTime);
+                    if (audioPlayer.duration) {
+                        slider.value = (audioPlayer.currentTime / audioPlayer.duration) * 100;
+                    }
+                }
+            });
+
+            audioPlayer.addEventListener('ended', () => {
+                isPlaying = false;
+                updatePlayButton(playBtn, 'paused');
+            });
+
+            audioPlayer.addEventListener('error', (e) => {
+                console.error('Audio error:', e);
+                isLoading = false;
+                audioPlayer = null;
+                updatePlayButton(playBtn, 'paused');
+                currentSpan.textContent = 'Error';
+            });
+
+            await audioPlayer.play();
+            isLoading = false;
+            isPlaying = true;
+            updatePlayButton(playBtn, 'playing');
+
+        } catch (error) {
+            console.error('TTS error:', error);
+            isLoading = false;
+            updatePlayButton(playBtn, 'paused');
+            currentSpan.textContent = 'Error';
+        }
+    });
+}
+
+function updatePlayButton(btn, state) {
+    btn.classList.remove('playing');
+    btn.disabled = false;
+
+    switch (state) {
+        case 'loading':
+            btn.innerHTML = '<span class="audio-spinner"></span>';
+            btn.disabled = true;
+            break;
+        case 'playing':
+            btn.innerHTML = '<span class="play-icon">⏸</span>';
+            btn.classList.add('playing');
+            break;
+        case 'paused':
+        default:
+            btn.innerHTML = '<span class="play-icon">▶</span>';
+            break;
+    }
+}
+
+function formatTime(seconds) {
+    if (!seconds || isNaN(seconds)) return '0:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+// Reset audio player when changing dates
+function resetAudioPlayer() {
+    if (audioPlayer) {
+        audioPlayer.pause();
+        audioPlayer = null;
+    }
+    isPlaying = false;
+    isLoading = false;
+}
 
 // Initialize
 loadArchiveIndex();
