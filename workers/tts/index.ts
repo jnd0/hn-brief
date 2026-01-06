@@ -1,4 +1,5 @@
 /// <reference types="@cloudflare/workers-types" />
+import { Buffer } from 'node:buffer';
 
 // ============================================================================
 // TTS Worker - Generates speech from daily digest using Gemini TTS
@@ -12,6 +13,25 @@ interface Env {
 
 const GEMINI_TTS_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent";
 const TTS_VOICE = "Charon"; // Informative, trustworthy voice for news digest
+
+const HN_PROMPT = `
+# AUDIO PROFILE: The HN Veteran
+## "The Daily Brief"
+
+### PERSONA
+You are a senior staff engineer with 20 years of experience. You are reading a technical digest to your peers.
+You are knowledgeable, precise, and slightly cynical but deeply interested in technology.
+You pronounce technical acronyms correctly (e.g., SQL as "Sequel", GUI as "Gooey", SaaS as "Sass", LLM as "L-L-M").
+
+### STYLE
+* Tone: Professional but conversational among geeks. Intelligent, sharp.
+* Pace: Efficient. We value our time.
+* Dynamics: Clear articulation of technical terms.
+
+### INSTRUCTION
+Read the following text segment VERBATIM.
+CRITICAL: Do not add intros, outros, greetings, or "signing off". Just read the text provided.
+`;
 
 // ============================================================================
 // Worker Handlers
@@ -38,7 +58,7 @@ export default {
             const audio = await getOrGenerateAudio(date, env);
             return corsResponse(new Response(audio, {
                 headers: {
-                    "Content-Type": "audio/wav",
+                    "Content-Type": "audio/mpeg",
                     "Cache-Control": "public, max-age=31536000", // 1 year (content-addressed)
                 }
             }), env);
@@ -56,7 +76,7 @@ export default {
 // Core TTS Logic
 // ============================================================================
 
-async function getOrGenerateAudio(date: string, env: Env): Promise<ArrayBuffer> {
+async function getOrGenerateAudio(date: string, env: Env): Promise<Uint8Array | ArrayBuffer> {
     // 1. Fetch digest markdown
     const digestText = await fetchDigestText(date, env);
     if (!digestText) {
@@ -65,7 +85,7 @@ async function getOrGenerateAudio(date: string, env: Env): Promise<ArrayBuffer> 
 
     // 2. Compute content hash for cache key
     const contentHash = await hashContent(digestText);
-    const cacheKey = `audio/${date}-${contentHash.slice(0, 8)}.wav`;
+    const cacheKey = `audio/${date}-${contentHash.slice(0, 8)}.mp3`;
 
     // 3. Check R2 cache
     const cached = await env.TTS_AUDIO.get(cacheKey);
@@ -79,17 +99,38 @@ async function getOrGenerateAudio(date: string, env: Env): Promise<ArrayBuffer> 
     // 4. Strip markdown formatting for cleaner speech
     const cleanText = stripMarkdown(digestText);
 
-    // 5. Generate audio via Gemini TTS
-    const pcmData = await generateSpeech(cleanText, env);
+    // 5. Generate audio via Gemini TTS (MP3) - Parallelized
+    const chunks = splitTextForTTS(cleanText);
+    console.log(`Split digest into ${chunks.length} chunks for faster generation`);
 
-    // 6. Convert PCM to WAV
-    const wavData = pcmToWav(pcmData, 24000, 1, 16);
+    // Execute in parallel (limited if needed, but for < 10 chunks Promise.all is fine)
+    const audioBuffers = await Promise.all(chunks.map((chunk, i) =>
+        generateSpeech(chunk, env, i)
+            .catch(err => {
+                console.error(`Failed to generate chunk ${i}:`, err);
+                throw err;
+            })
+    ));
+
+    // Concatenate MP3 buffers
+    const totalLength = audioBuffers.reduce((acc, buf) => acc + buf.length, 0);
+    const combinedBuffer = new Uint8Array(totalLength);
+
+    let offset = 0;
+    for (const buf of audioBuffers) {
+        combinedBuffer.set(buf, offset);
+        offset += buf.length;
+    }
+
+    const mp3Data = combinedBuffer;
+
+    // (WAV conversion removed)
 
     // 7. Store in R2
-    await env.TTS_AUDIO.put(cacheKey, wavData);
+    await env.TTS_AUDIO.put(cacheKey, mp3Data);
     console.log(`Cached: ${cacheKey}`);
 
-    return wavData;
+    return mp3Data;
 }
 
 async function fetchDigestText(date: string, env: Env): Promise<string | null> {
@@ -130,11 +171,32 @@ function stripMarkdown(text: string): string {
         .trim();
 }
 
+// Split text into safe chunks for TTS (< 2000 chars, split at paragraph)
+function splitTextForTTS(text: string, limit = 1500): string[] {
+    const chunks: string[] = [];
+    let currentChunk = "";
+
+    // Split by paragraphs first
+    const paragraphs = text.split(/\n\n+/);
+
+    for (const para of paragraphs) {
+        if ((currentChunk.length + para.length + 2) > limit) {
+            if (currentChunk) chunks.push(currentChunk.trim());
+            currentChunk = para;
+        } else {
+            currentChunk += (currentChunk ? "\n\n" : "") + para;
+        }
+    }
+
+    if (currentChunk) chunks.push(currentChunk.trim());
+    return chunks;
+}
+
 // ============================================================================
 // Gemini TTS API
 // ============================================================================
 
-async function generateSpeech(text: string, env: Env): Promise<Uint8Array> {
+async function generateSpeech(text: string, env: Env, chunkIndex?: number): Promise<Uint8Array> {
     const response = await fetch(GEMINI_TTS_URL, {
         method: "POST",
         headers: {
@@ -143,7 +205,7 @@ async function generateSpeech(text: string, env: Env): Promise<Uint8Array> {
         },
         body: JSON.stringify({
             contents: [{
-                parts: [{ text: `Read this news digest in an informative, clear tone:\n\n${text}` }]
+                parts: [{ text: `${HN_PROMPT}\n\n${text}` }]
             }],
             generationConfig: {
                 responseModalities: ["AUDIO"],
@@ -174,61 +236,15 @@ async function generateSpeech(text: string, env: Env): Promise<Uint8Array> {
     };
 
     const audioBase64 = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    const mimeType = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.mimeType;
+    console.log(`Gemini chunk mimeType: ${mimeType}`);
+
     if (!audioBase64) {
         throw new Error("No audio data in Gemini response");
     }
 
     // Decode Base64 to binary
-    const binaryString = atob(audioBase64);
-    const bytes = Uint8Array.from(binaryString, c => c.charCodeAt(0));
-
-    return bytes;
-}
-
-// ============================================================================
-// PCM to WAV Conversion
-// ============================================================================
-
-function pcmToWav(pcmData: Uint8Array, sampleRate: number, numChannels: number, bitsPerSample: number): ArrayBuffer {
-    const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
-    const blockAlign = numChannels * (bitsPerSample / 8);
-    const dataSize = pcmData.length;
-    const headerSize = 44;
-    const totalSize = headerSize + dataSize;
-
-    const buffer = new ArrayBuffer(totalSize);
-    const view = new DataView(buffer);
-
-    // RIFF header
-    writeString(view, 0, "RIFF");
-    view.setUint32(4, totalSize - 8, true);
-    writeString(view, 8, "WAVE");
-
-    // fmt subchunk
-    writeString(view, 12, "fmt ");
-    view.setUint32(16, 16, true); // Subchunk1Size (16 for PCM)
-    view.setUint16(20, 1, true);  // AudioFormat (1 = PCM)
-    view.setUint16(22, numChannels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, byteRate, true);
-    view.setUint16(32, blockAlign, true);
-    view.setUint16(34, bitsPerSample, true);
-
-    // data subchunk
-    writeString(view, 36, "data");
-    view.setUint32(40, dataSize, true);
-
-    // PCM data
-    const dataView = new Uint8Array(buffer, headerSize);
-    dataView.set(pcmData);
-
-    return buffer;
-}
-
-function writeString(view: DataView, offset: number, str: string): void {
-    for (let i = 0; i < str.length; i++) {
-        view.setUint8(offset + i, str.charCodeAt(i));
-    }
+    return Buffer.from(audioBase64, 'base64');
 }
 
 // ============================================================================
