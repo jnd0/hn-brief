@@ -486,6 +486,7 @@ function initAudioPlayer() {
             });
 
             audioPlayer.addEventListener('timeupdate', () => {
+                if (!audioPlayer) return; // Prevent error if player reset
                 // Only update slider if user is NOT dragging it
                 if (!isDragging) {
                     currentSpan.textContent = formatTime(audioPlayer.currentTime);

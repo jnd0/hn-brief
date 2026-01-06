@@ -418,6 +418,7 @@ body {
     align-items: center;
     gap: 12px;
     margin: 0;
+    margin-right: 10px;
     padding: 0;
     flex-shrink: 0;
 }
@@ -739,6 +740,39 @@ body {
 
     .digest-content p {
         margin-bottom: 14px;
+    }
+
+    /* Digest header and audio player vertical stack */
+    .digest-header-container {
+        flex-direction: column;
+        align-items: center;
+        /* Center horizontally */
+        gap: 12px;
+        text-align: center;
+    }
+
+    .digest-header-container h1 {
+        margin-right: 0;
+        margin-bottom: 0;
+        width: 100%;
+        text-align: center;
+        font-size: 12pt;
+    }
+
+    .audio-player {
+        width: 100%;
+        margin-right: 0;
+        /* Reset for mobile centering */
+        justify-content: center;
+        /* Center player content */
+        gap: 8px;
+        /* Tighter gap */
+        padding: 4px 0;
+    }
+
+    .audio-time {
+        font-size: 9pt;
+        min-width: 35px;
     }
 
     /* Footer */
