@@ -2,6 +2,9 @@
     "name": "hn-brief-tts",
     "main": "index.ts",
     "compatibility_date": "2025-01-01",
+    "compatibility_flags": [
+        "nodejs_compat"
+    ],
     "r2_buckets": [
         {
             "binding": "TTS_AUDIO",

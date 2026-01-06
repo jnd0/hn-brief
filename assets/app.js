@@ -475,7 +475,9 @@ function initAudioPlayer() {
             }
 
             const blob = await res.blob();
-            const blobUrl = URL.createObjectURL(blob);
+            // Force audio/mpeg type to help browser detection
+            const mp3Blob = new Blob([blob], { type: 'audio/mpeg' });
+            const blobUrl = URL.createObjectURL(mp3Blob);
             audioPlayer = new Audio(blobUrl);
             audioPlayer.blobUrl = blobUrl; // Store for cleanup
 
