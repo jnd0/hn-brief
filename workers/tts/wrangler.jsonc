@@ -11,6 +11,12 @@
     "vars": {
         "SITE_ORIGIN": "https://hn-brief.com"
     },
+    "routes": [
+        {
+            "pattern": "tts.hn-brief.com/*",
+            "zone_name": "hn-brief.com"
+        }
+    ],
     "observability": {
         "enabled": true
     }
