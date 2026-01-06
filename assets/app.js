@@ -477,6 +477,7 @@ function initAudioPlayer() {
             const blob = await res.blob();
             const blobUrl = URL.createObjectURL(blob);
             audioPlayer = new Audio(blobUrl);
+            audioPlayer.blobUrl = blobUrl; // Store for cleanup
 
             audioPlayer.addEventListener('loadedmetadata', () => {
                 durationSpan.textContent = formatTime(audioPlayer.duration);
@@ -550,6 +551,9 @@ function formatTime(seconds) {
 function resetAudioPlayer() {
     if (audioPlayer) {
         audioPlayer.pause();
+        if (audioPlayer.blobUrl) {
+            URL.revokeObjectURL(audioPlayer.blobUrl);
+        }
         audioPlayer = null;
     }
     isPlaying = false;
