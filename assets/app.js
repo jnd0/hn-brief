@@ -384,7 +384,7 @@ document.addEventListener('click', (e) => {
 // Detect environment and set TTS worker URL accordingly
 const TTS_WORKER_URL = window.location.hostname === 'localhost'
     ? 'http://localhost:8787'
-    : 'https://hn-brief-tts.jnd0.workers.dev'; // Update with your deployed worker URL
+    : 'https://tts.hn-brief.com';
 let audioPlayer = null;
 let isPlaying = false;
 let isLoading = false;
@@ -464,7 +464,20 @@ function initAudioPlayer() {
 
         try {
             const audioUrl = `${TTS_WORKER_URL}/tts/${currentDate}`;
-            audioPlayer = new Audio(audioUrl);
+
+            // Explicitly fetch first to catch errors (404/500)
+            const res = await fetch(audioUrl);
+            if (!res.ok) {
+                const errText = await res.text();
+                // If 404, maybe digest not found. If 500, worker error.
+                console.error(`TTS Error ${res.status}:`, errText);
+                throw new Error(`Audio load failed (${res.status}): ${errText.slice(0, 100)}`);
+            }
+
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            audioPlayer = new Audio(blobUrl);
+            audioPlayer.blobUrl = blobUrl; // Store for cleanup
 
             audioPlayer.addEventListener('loadedmetadata', () => {
                 durationSpan.textContent = formatTime(audioPlayer.duration);
@@ -538,6 +551,9 @@ function formatTime(seconds) {
 function resetAudioPlayer() {
     if (audioPlayer) {
         audioPlayer.pause();
+        if (audioPlayer.blobUrl) {
+            URL.revokeObjectURL(audioPlayer.blobUrl);
+        }
         audioPlayer = null;
     }
     isPlaying = false;
