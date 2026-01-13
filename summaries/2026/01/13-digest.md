@@ -1,22 +1,6 @@
 # HN Daily Digest - 2026-01-13
 
-The DOJ's threat to indict Jerome Powell over Fed renovations isn't about construction ethics—it's a naked power play. Powell explicitly tied the criminal probe to the Fed's refusal to slash rates, calling it "a consequence of setting interest rates based on public interest, not presidential preference." The HN thread saw immediate bipartisan alarm, with users labeling it "banana republic" tactics. The real target isn't Powell himself, who's near the end of his term; it's a chilling message to future Fed chairs: comply or face legal annihilation. This isn't just about monetary policy; it's the executive branch weaponizing law to dismantle institutional guardrails.  
-
-Meanwhile, Apple's Gemini deal reveals a brutal calculus: building frontier AI is prohibitively expensive, so they're outsourcing the heavy lifting to Google. The HN discussion noted this isn't just pragmatism—it's a strategic gamble. By becoming the "last mile" delivery network for AI, Apple avoids CapEx but cedes core tech to a rival. The financial plumbing is key: this likely piggybacks on Google's multi-billion-dollar search deal, making Gemini effectively free for Apple. Users are split—some see a savvy play, others fear a race to the bottom where Apple's ecosystem becomes a mere vessel for competitors' models.  
-
-Anthropic's moves this week highlight the AI gold rush's ugly side. First, they dropped Cowork, a GUI wrapper for Claude Code aimed at non-coders. HN praised it as a logical evolution, turning CLI power into "life-admin" simplicity. But the glow faded fast with news they're blocking third-party clients like OpenCode. The community reaction was scathing: users admitted Anthropic's official client is buggy and slow, yet the company chose lock-in over iteration. One commenter nailed it: "They’re not fixing the product; they’re fixing the user in place." For a pre-IPO company, this screams short-term greed over long-term trust.  
-
-The LLM experiments are getting delightfully weird. TimeCapsuleLLM—trained only on 1800-1875 data—sparked a debate: could it reason about modern concepts? Some saw a test for true AGI; others noted it'd just hallucinate period-appropriate nonsense (like the "Vulcan" planet). Then came LLVM's roast: a developer's takedown of the compiler backend's "bad parts"—glacial compile times, unstable APIs, and documentation gaps. HN veterans nodded along, especially about Rust's compile agony. The takeaway? Even foundational tools are held together by duct tape and hubris.  
-
-Desktop environments are having a moment. Xfce fans evangelized its "perceived latency" edge over GNOME/KDE, calling it the last bastion of click-snappy UIs. The counterpoint? It looks like Windows XP by default. Across the aisle, Win8DE—a Linux theme resurrecting Microsoft's Metro UI—drew nostalgia for Windows Phone's underrated design, though everyone agreed forcing it on desktop users was a cardinal sin. Both projects underscore a quiet rebellion against modern UI bloat.  
-
-On the fringes, creativity thrived. The floppy disk TV remote hack was HN catnip: a tactile, kid-friendly interface where physical disks trigger media playback. It’s a beautiful hack, but commenters immediately riffed on alternatives (RFID cards, DVDs) and noted commercial versions like Yoto already exist. Then there’s "postal arbitrage"—using Amazon's free shipping to send messages via gift notes. The economics barely hold up (minimum orders kill the math), but it’s a perfect metaphor for exploiting broken systems.  
-
-Climate and AI ethics collided brutally. The Himalayas' snow loss threatens water for billions, with HN grimly noting this could trigger wars or famines—yet the thread devolved into debates over India's preparedness. Simultaneously, Grok's "undressing" feature exposed X's moral bankruptcy: instead of killing the non-consensual deepfake tool, they paywalled it. Users argued this isn't like Photoshop; it's automated, scaled harassment-as-a-service.  
-
-Iran's 96-hour internet blackout was a stark reminder of digital authoritarianism. HN discussed Starlink jamming and regime stability, but the most telling exchange was a user morbidly anticipating a "content drop" post-blackout—only to be rebuked for treating human suffering as spectacle.  
-
-**Worth watching**: How the Powell probe escalates—it’ll test if institutional checks still function. Also, Apple’s AI outsourcing gambit; if Gemini integration stumbles, their "wait-and-see" strategy could backfire spectacularly.
+Digest generation failed.
 
 ---
 
