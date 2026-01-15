@@ -54,11 +54,265 @@ export interface Comment {
     children?: Comment[];
 }
 
+/** Metadata computed for each comment during tree analysis */
+interface CommentMetadata {
+    comment: Comment;
+    depth: number;
+    descendantCount: number;
+    directReplyCount: number;
+    textLength: number;           // HTML-stripped length
+    uniqueAuthorCount: number;
+    rootId: string;               // ID of top-level ancestor
+    parentId: string | null;
+    score: number;
+}
+
+/** Options for comment selection algorithm */
+interface CommentSelectionOptions {
+    maxChars: number;    // Budget on formatted output
+    perRootCap: number;  // Max comments from same top-level thread
+}
+
 // ============================================================================
 // Constants
 // ============================================================================
 
 export const ALGOLIA_API = "https://hn.algolia.com/api/v1";
+
+// ============================================================================
+// Comment Selection Algorithm
+// ============================================================================
+
+/**
+ * Strip HTML tags from text for accurate length scoring
+ */
+function stripHtml(text: string): string {
+    return text
+        .replace(/<[^>]*>/g, '')           // Remove HTML tags
+        .replace(/&[a-z]+;/gi, ' ')        // Replace HTML entities with space
+        .replace(/&#x[0-9a-f]+;/gi, ' ')   // Replace hex entities
+        .replace(/&#\d+;/gi, ' ')          // Replace decimal entities
+        .trim();
+}
+
+/**
+ * Check if a comment should be skipped (deleted or empty)
+ */
+function shouldSkipComment(comment: Comment): boolean {
+    if (!comment.text) return true;
+    const stripped = stripHtml(comment.text);
+    if (!stripped || stripped === '[deleted]' || stripped === '[dead]') return true;
+    return false;
+}
+
+/**
+ * Compute quality score for a comment based on structural signals
+ */
+function scoreComment(meta: CommentMetadata): number {
+    const descendantScore = 2.0 * Math.log(1 + meta.descendantCount);
+    const textScore = 1.0 * Math.log(1 + meta.textLength / 100);
+    const replyScore = 0.8 * meta.directReplyCount;
+    const authorScore = 0.3 * meta.uniqueAuthorCount;
+    const depthPenalty = 0.8 * Math.max(0, meta.depth - 2);
+
+    // Tie-breaker for stable ordering
+    const tieBreaker = (meta.descendantCount * 0.001) + (meta.textLength * 0.00001);
+
+    return descendantScore + textScore + replyScore + authorScore - depthPenalty + tieBreaker;
+}
+
+/**
+ * Recursively analyze comment tree and build metadata for all comments
+ */
+function analyzeCommentTree(
+    comments: Comment[],
+    depth: number = 0,
+    rootId: string | null = null,
+    parentId: string | null = null
+): CommentMetadata[] {
+    const results: CommentMetadata[] = [];
+
+    for (const comment of comments) {
+        if (shouldSkipComment(comment)) continue;
+
+        const currentRootId = rootId ?? comment.id;
+        const children = comment.children || [];
+
+        // Recursively analyze children first
+        const childMetadata = analyzeCommentTree(
+            children,
+            depth + 1,
+            currentRootId,
+            comment.id
+        );
+
+        // Compute statistics
+        const descendantCount = childMetadata.reduce(
+            (sum, m) => sum + 1 + m.descendantCount,
+            0
+        );
+        const directReplyCount = children.filter(c => !shouldSkipComment(c)).length;
+        const textLength = stripHtml(comment.text).length;
+
+        // Count unique authors in subtree
+        const authors = new Set<string>([comment.author]);
+        for (const m of childMetadata) {
+            authors.add(m.comment.author);
+        }
+        const uniqueAuthorCount = authors.size;
+
+        const meta: CommentMetadata = {
+            comment,
+            depth,
+            descendantCount,
+            directReplyCount,
+            textLength,
+            uniqueAuthorCount,
+            rootId: currentRootId,
+            parentId,
+            score: 0 // Will be computed below
+        };
+        meta.score = scoreComment(meta);
+
+        results.push(meta);
+        results.push(...childMetadata);
+    }
+
+    return results;
+}
+
+/**
+ * Build ancestor chain for a comment by traversing up the tree
+ */
+function buildAncestorChain(
+    commentId: string,
+    metaById: Map<string, CommentMetadata>,
+    maxDepth: number = 3
+): Comment[] {
+    const chain: Comment[] = [];
+    let current = metaById.get(commentId);
+    let depth = 0;
+
+    while (current?.parentId && depth < maxDepth) {
+        const parent = metaById.get(current.parentId);
+        if (parent) {
+            chain.unshift(parent.comment);
+            current = parent;
+            depth++;
+        } else {
+            break;
+        }
+    }
+
+    return chain;
+}
+
+/**
+ * Format a single comment with optional context
+ */
+function formatComment(
+    comment: Comment,
+    ancestors: Comment[],
+    replies: Comment[]
+): string {
+    let result = '';
+
+    // Add ancestors for context (if deep comment)
+    for (let i = 0; i < ancestors.length; i++) {
+        const ancestor = ancestors[i];
+        if (!ancestor) continue;
+        const ancestorIndent = '  '.repeat(i);
+        const ancestorText = stripHtml(ancestor.text).slice(0, 150);
+        result += `${ancestorIndent}[context] ${ancestor.author}: ${ancestorText}...\n`;
+    }
+
+    // Add main comment
+    const mainIndent = '  '.repeat(ancestors.length);
+    result += `${mainIndent}- ${comment.author}: ${stripHtml(comment.text)}\n`;
+
+    // Add best replies
+    for (const reply of replies) {
+        const replyIndent = '  '.repeat(ancestors.length + 1);
+        result += `${replyIndent}- ${reply.author}: ${stripHtml(reply.text)}\n`;
+    }
+
+    return result;
+}
+
+/**
+ * Select and format best comments using scoring algorithm
+ * Returns formatted text respecting character budget
+ */
+function selectAndFormatComments(
+    comments: Comment[],
+    options: CommentSelectionOptions
+): string {
+    if (!comments || comments.length === 0) {
+        return 'No comments available.';
+    }
+
+    // Analyze entire tree
+    const allMetadata = analyzeCommentTree(comments);
+
+    if (allMetadata.length === 0) {
+        return 'No comments available.';
+    }
+
+    // Sort by score descending
+    const sorted = [...allMetadata].sort((a, b) => b.score - a.score);
+
+    // Select comments with per-root diversity cap
+    const selected: CommentMetadata[] = [];
+    const rootCounts = new Map<string, number>();
+
+    for (const meta of sorted) {
+        const rootCount = rootCounts.get(meta.rootId) || 0;
+        if (rootCount >= options.perRootCap) continue;
+
+        selected.push(meta);
+        rootCounts.set(meta.rootId, rootCount + 1);
+    }
+
+    // Format selected comments with budget enforcement
+    let result = '';
+
+    // Pre-build indexes for O(1) lookups
+    const metaById = new Map(allMetadata.map(m => [m.comment.id, m]));
+    const childrenByParentId = new Map<string, CommentMetadata[]>();
+    for (const m of allMetadata) {
+        if (m.parentId) {
+            const siblings = childrenByParentId.get(m.parentId) || [];
+            siblings.push(m);
+            childrenByParentId.set(m.parentId, siblings);
+        }
+    }
+
+    for (const meta of selected) {
+        // Build ancestor chain if deep comment (reuse metaById)
+        const ancestors = meta.depth > 0
+            ? buildAncestorChain(meta.comment.id, metaById)
+            : [];
+
+        // Get best 1-2 replies using pre-built index
+        const children = childrenByParentId.get(meta.comment.id) || [];
+        const replies = children
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 2)
+            .map(m => m.comment);
+
+        // Format this comment thread
+        const formatted = formatComment(meta.comment, ancestors, replies);
+
+        // Check budget
+        if (result.length + formatted.length > options.maxChars) {
+            break; // Budget exhausted
+        }
+
+        result += formatted + '\n';
+    }
+
+    return result.trim() || 'No comments available.';
+}
 
 // ============================================================================
 // Post Type Detection
@@ -137,9 +391,11 @@ export function buildSummaryPrompt(story: AlgoliaHit, comments: Comment[]): stri
     const typeLabel = getPostTypeLabel(postType);
     const isSelfPost = postType !== 'article';
 
-    const commentText = comments.slice(0, 10).map((c) => {
-        return `- ${c.author}: ${c.text}\n` + (c.children || []).slice(0, 2).map((child) => `  - ${child.author}: ${child.text}`).join("\n");
-    }).join("\n\n");
+    // Use scoring-based comment selection
+    const commentText = selectAndFormatComments(comments, {
+        maxChars: 15000,  // Top ~10-15 comments for quality signal and avoid noise
+        perRootCap: 3
+    });
 
     const contentDescription = isSelfPost
         ? `This is a ${typeLabel} post (self-post, no external article).`
