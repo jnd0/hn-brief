@@ -96,6 +96,8 @@ bun run summarize -- -d 2025-12-25 -g
 | `GITHUB_TOKEN` | GitHub PAT for automated commits | For Worker only |
 | `REPO_OWNER` | GitHub username | For Worker only |
 | `REPO_NAME` | Repository name | For Worker only |
+| `MAX_COMMENT_CHARS` | Character budget for comments (default: 15000) | No |
+| `MAX_COMMENTS_PER_ROOT` | Max comments per top-level thread (default: 3) | No |
 
 
 ## Project Structure

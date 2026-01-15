@@ -79,6 +79,10 @@ interface CommentSelectionOptions {
 
 export const ALGOLIA_API = "https://hn.algolia.com/api/v1";
 
+// Comment selection configuration (configurable via environment variables)
+const MAX_COMMENT_CHARS = parseInt(process.env.MAX_COMMENT_CHARS || '15000', 10);
+const MAX_COMMENTS_PER_ROOT = parseInt(process.env.MAX_COMMENTS_PER_ROOT || '3', 10);
+
 // ============================================================================
 // Comment Selection Algorithm
 // ============================================================================
@@ -393,7 +397,7 @@ export function buildSummaryPrompt(story: AlgoliaHit, comments: Comment[]): stri
 
     // Use scoring-based comment selection
     const commentText = selectAndFormatComments(comments, {
-        maxChars: MAX_COMMENT_CHARS,  // Top ~10-15 comments for quality signal and avoid noise
+        maxChars: MAX_COMMENT_CHARS,
         perRootCap: MAX_COMMENTS_PER_ROOT
     });
 

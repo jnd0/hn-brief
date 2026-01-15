@@ -66,6 +66,10 @@ Required for LLM summarization:
 For GitHub auto-commit (workers only):
 - `GITHUB_TOKEN`, `REPO_OWNER`, `REPO_NAME`
 
+Comment selection (optional):
+- `MAX_COMMENT_CHARS` - Character budget for comments (default: `15000`)
+- `MAX_COMMENTS_PER_ROOT` - Max comments per top-level thread (default: `3`)
+
 ## Key Conventions
 
 - **Date format**: Always `YYYY-MM-DD`
