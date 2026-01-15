@@ -393,8 +393,8 @@ export function buildSummaryPrompt(story: AlgoliaHit, comments: Comment[]): stri
 
     // Use scoring-based comment selection
     const commentText = selectAndFormatComments(comments, {
-        maxChars: 15000,  // Top ~10-15 comments for quality signal and avoid noise
-        perRootCap: 3
+        maxChars: MAX_COMMENT_CHARS,  // Top ~10-15 comments for quality signal and avoid noise
+        perRootCap: MAX_COMMENTS_PER_ROOT
     });
 
     const contentDescription = isSelfPost
