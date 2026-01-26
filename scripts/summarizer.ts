@@ -24,25 +24,31 @@ import {
 // ============================================================================
 
 // LLM Provider Configuration
-// Priority: OpenRouter > OpenAI-compatible
+// Priority: Nvidia NIM > OpenRouter > OpenAI-compatible
+const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-// Determine which API to use
-const USE_OPENROUTER = !!OPENROUTER_API_KEY;
-const API_KEY = OPENROUTER_API_KEY || OPENAI_API_KEY;
-const API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const MODEL = OPENROUTER_MODEL;
+// Configurable endpoint and model
+const LLM_API_URL = process.env.LLM_API_URL;
+const LLM_MODEL = process.env.LLM_MODEL;
+
+// Determine which API to use (priority: Nvidia > OpenRouter > OpenAI)
+const API_KEY = NVIDIA_API_KEY || OPENROUTER_API_KEY || OPENAI_API_KEY;
+const DEFAULT_NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
+const DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const API_URL = LLM_API_URL || (NVIDIA_API_KEY ? DEFAULT_NVIDIA_URL : DEFAULT_OPENROUTER_URL);
+const MODEL = LLM_MODEL || (NVIDIA_API_KEY ? 'moonshotai/kimi-k2-thinking' : 'xiaomi/mimo-v2-flash:free');
 
 // Create LLM config
 const llmConfig: LLMConfig = {
   apiKey: API_KEY || '',
   apiUrl: API_URL,
-  model: MODEL || 'xiaomi/mimo-v2-flash:free'
+  model: MODEL
 };
 
-console.log(`Using ${USE_OPENROUTER ? 'OpenRouter' : 'OpenAI'} with model: ${MODEL}`);
+const provider = NVIDIA_API_KEY ? 'Nvidia NIM' : (OPENROUTER_API_KEY ? 'OpenRouter' : 'OpenAI');
+console.log(`Using ${provider} with model: ${MODEL}`);
 
 // ============================================================================
 // CLI Arguments

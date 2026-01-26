@@ -493,7 +493,7 @@ export async function summarizeStory(
                     { role: "system", content: "You are a helpful assistant summarizing Hacker News." },
                     { role: "user", content: prompt }
                 ],
-                temperature: 0.3
+                temperature: 1.0
             })
         });
 

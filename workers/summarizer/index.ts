@@ -20,14 +20,19 @@ import {
 // ============================================================================
 
 interface Env {
-    OPENROUTER_API_KEY: string;
-    OPENROUTER_MODEL: string;
+    // LLM Configuration (Nvidia NIM or OpenRouter)
+    NVIDIA_API_KEY?: string;
+    OPENROUTER_API_KEY?: string;
+    LLM_API_URL?: string;
+    LLM_MODEL?: string;
+    // GitHub
     GITHUB_TOKEN: string;
     REPO_OWNER: string;
     REPO_NAME: string;
 }
 
-const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+const DEFAULT_NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
+const DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 // ============================================================================
 // Worker Handlers
@@ -41,7 +46,8 @@ export default {
     // Manual trigger via HTTP for testing
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
         const url = new URL(request.url);
-        if (url.searchParams.get("key") !== env.OPENROUTER_API_KEY?.substring(0, 10)) {
+        const apiKey = env.NVIDIA_API_KEY || env.OPENROUTER_API_KEY || '';
+        if (url.searchParams.get("key") !== apiKey.substring(0, 10)) {
             return new Response("Unauthorized", { status: 401 });
         }
 
@@ -61,11 +67,15 @@ async function generateDailySummary(env: Env) {
 
     console.log(`Generating summary for ${date}`);
 
-    // Create LLM config from environment
+    // Create LLM config from environment (priority: Nvidia > OpenRouter)
+    const apiKey = env.NVIDIA_API_KEY || env.OPENROUTER_API_KEY || '';
+    const defaultUrl = env.NVIDIA_API_KEY ? DEFAULT_NVIDIA_URL : DEFAULT_OPENROUTER_URL;
+    const defaultModel = env.NVIDIA_API_KEY ? 'moonshotai/kimi-k2-thinking' : 'xiaomi/mimo-v2-flash:free';
+
     const llmConfig: LLMConfig = {
-        apiKey: env.OPENROUTER_API_KEY,
-        apiUrl: OPENROUTER_API_URL,
-        model: env.OPENROUTER_MODEL
+        apiKey: apiKey,
+        apiUrl: env.LLM_API_URL || defaultUrl,
+        model: env.LLM_MODEL || defaultModel
     };
 
     // 1. Fetch Stories (top 20 by points)
