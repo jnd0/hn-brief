@@ -154,9 +154,14 @@ export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: str
 // Comment Selection Algorithm
 // ============================================================================
 
-// Comment selection configuration (configurable via environment variables)
-const MAX_COMMENT_CHARS = parseInt(process.env.MAX_COMMENT_CHARS || '15000', 10);
-const MAX_COMMENTS_PER_ROOT = parseInt(process.env.MAX_COMMENTS_PER_ROOT || '3', 10);
+// Comment selection configuration (configurable via environment variables in Node.js)
+// In Cloudflare Workers, these will use defaults since 'process' is undefined
+const MAX_COMMENT_CHARS = typeof process !== 'undefined'
+    ? parseInt(process.env?.MAX_COMMENT_CHARS || '15000', 10)
+    : 15000;
+const MAX_COMMENTS_PER_ROOT = typeof process !== 'undefined'
+    ? parseInt(process.env?.MAX_COMMENTS_PER_ROOT || '3', 10)
+    : 3;
 
 /**
  * Strip HTML tags from text for accurate length scoring
@@ -568,8 +573,46 @@ export async function summarizeStory(
             })
         });
 
-        const result = await response.json() as { choices?: { message?: { content?: string } }[] };
+        // Log response status for debugging
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`API error for "${story.title}": ${response.status} - ${errorText.slice(0, 500)}`);
+            return {
+                id: story.objectID,
+                title: story.title,
+                url: story.url || `https://news.ycombinator.com/item?id=${story.objectID}`,
+                points: story.points,
+                num_comments: story.num_comments,
+                summary: `API error: ${response.status}`,
+                discussion_summary: `API error: ${response.status}`,
+                postType
+            };
+        }
+
+        const result = await response.json() as { choices?: { message?: { content?: string } }[], error?: { message?: string } };
+
+        // Check for API error in response body
+        if (result.error) {
+            console.error(`API returned error for "${story.title}": ${result.error.message}`);
+            return {
+                id: story.objectID,
+                title: story.title,
+                url: story.url || `https://news.ycombinator.com/item?id=${story.objectID}`,
+                points: story.points,
+                num_comments: story.num_comments,
+                summary: `API error: ${result.error.message}`,
+                discussion_summary: `API error: ${result.error.message}`,
+                postType
+            };
+        }
+
         const content = result.choices?.[0]?.message?.content || "";
+
+        // Log if content is empty
+        if (!content) {
+            console.error(`Empty response for "${story.title}": ${JSON.stringify(result).slice(0, 500)}`);
+        }
+
         const parsed = parseSummaryResponse(content);
 
         return {

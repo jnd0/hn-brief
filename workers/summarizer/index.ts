@@ -70,8 +70,18 @@ async function generateDailySummary(env: Env) {
     console.log(`Generating summary for ${date}`);
 
     // Create LLM config from environment using shared utility
-    const { config: llmConfig, provider } = createLLMConfig(env);
-    console.log(`Using ${provider} with model: ${llmConfig.model}`);
+    let llmConfig;
+    let provider;
+    try {
+        const result = createLLMConfig(env);
+        llmConfig = result.config;
+        provider = result.provider;
+        console.log(`Using ${provider} with model: ${llmConfig.model}`);
+    } catch (e) {
+        console.error(`Failed to create LLM config: ${e}`);
+        console.error(`Available env keys: NVIDIA_API_KEY=${!!env.NVIDIA_API_KEY}, OPENROUTER_API_KEY=${!!env.OPENROUTER_API_KEY}, OPENAI_API_KEY=${!!env.OPENAI_API_KEY}`);
+        throw e;
+    }
 
     // 1. Fetch Stories (top 20 by points)
     const stories = await fetchTopStories();
@@ -87,16 +97,18 @@ async function generateDailySummary(env: Env) {
     );
     console.log(`Fetched all story details.`);
 
-    // 3. Process LLM calls in BATCHES of 10
-    const BATCH_SIZE = 10;
+    // 3. Process LLM calls in SMALL BATCHES to respect 40 rpm limit
+    // 40 rpm = batch of 5 every 7.5 seconds is safe
+    const BATCH_SIZE = 5;
+    const BATCH_DELAY_MS = 8000; // 8 seconds between batches
     const processedStories: ProcessedStory[] = [];
 
     for (let i = 0; i < storyDetails.length; i += BATCH_SIZE) {
         const batch = storyDetails.slice(i, i + BATCH_SIZE);
-        console.log(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(storyDetails.length / BATCH_SIZE)}...`);
+        console.log(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(storyDetails.length / BATCH_SIZE)} (${batch.length} stories)...`);
 
         const batchResults = await Promise.all(
-            batch.map(async ({ hit, details }) => {
+            batch.map(async ({ hit, details }: { hit: AlgoliaHit; details: any }) => {
                 const summary = await summarizeStory(hit, details.children || [], llmConfig);
                 return summary;
             })
@@ -104,9 +116,9 @@ async function generateDailySummary(env: Env) {
 
         processedStories.push(...batchResults);
 
-        // Small delay between batches
+        // Delay between batches to respect 40 rpm limit
         if (i + BATCH_SIZE < storyDetails.length) {
-            await new Promise(r => setTimeout(r, 500));
+            await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
         }
     }
     console.log(`Summarized ${processedStories.length} stories.`);

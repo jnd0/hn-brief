@@ -159,8 +159,10 @@ async function processDate(date: string, mode: string): Promise<{ date: string; 
     console.log(`   ⚠️ No API key found, running in simulation mode`);
   }
 
-  // Process LLM calls in BATCHES of 10
-  const BATCH_SIZE = 10;
+  // Process LLM calls in SMALL BATCHES to respect 40 rpm limit
+  // 40 rpm = batch of 5 every 10 seconds is safe
+  const BATCH_SIZE = 5;
+  const BATCH_DELAY_MS = 10000; // 10 seconds between batches
   const processedStories: ProcessedStory[] = [];
 
   for (let i = 0; i < storyDetails.length; i += BATCH_SIZE) {
@@ -176,9 +178,9 @@ async function processDate(date: string, mode: string): Promise<{ date: string; 
 
     processedStories.push(...batchResults);
 
-    // Small delay between batches to respect rate limits
+    // Delay between batches to respect 40 rpm limit
     if (i + BATCH_SIZE < storyDetails.length) {
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
     }
   }
   console.log(`   ✅ Summarized ${processedStories.length} stories`);
