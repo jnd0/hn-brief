@@ -8,7 +8,6 @@
 import { mkdir } from "fs/promises";
 import {
   type ProcessedStory,
-  type LLMConfig,
   type AlgoliaHit,
   fetchTopStories,
   fetchStoryDetails,
@@ -16,39 +15,24 @@ import {
   generateDigest,
   formatArticleMarkdown,
   formatDigestMarkdown,
-  getPostTypeLabel
+  getPostTypeLabel,
+  createLLMConfig
 } from '../shared/summarizer-core';
 
 // ============================================================================
 // Configuration
 // ============================================================================
 
-// LLM Provider Configuration
-// Priority: Nvidia NIM > OpenRouter > OpenAI-compatible
-const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY;
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+// Create LLM config from environment variables
+const { config: llmConfig, provider } = createLLMConfig({
+  NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
+  OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  LLM_API_URL: process.env.LLM_API_URL,
+  LLM_MODEL: process.env.LLM_MODEL
+});
 
-// Configurable endpoint and model
-const LLM_API_URL = process.env.LLM_API_URL;
-const LLM_MODEL = process.env.LLM_MODEL;
-
-// Determine which API to use (priority: Nvidia > OpenRouter > OpenAI)
-const API_KEY = NVIDIA_API_KEY || OPENROUTER_API_KEY || OPENAI_API_KEY;
-const DEFAULT_NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
-const DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const API_URL = LLM_API_URL || (NVIDIA_API_KEY ? DEFAULT_NVIDIA_URL : DEFAULT_OPENROUTER_URL);
-const MODEL = LLM_MODEL || (NVIDIA_API_KEY ? 'moonshotai/kimi-k2-thinking' : 'xiaomi/mimo-v2-flash:free');
-
-// Create LLM config
-const llmConfig: LLMConfig = {
-  apiKey: API_KEY || '',
-  apiUrl: API_URL,
-  model: MODEL
-};
-
-const provider = NVIDIA_API_KEY ? 'Nvidia NIM' : (OPENROUTER_API_KEY ? 'OpenRouter' : 'OpenAI');
-console.log(`Using ${provider} with model: ${MODEL}`);
+console.log(`Using ${provider} with model: ${llmConfig.model}`);
 
 // ============================================================================
 // CLI Arguments
@@ -171,7 +155,7 @@ async function processDate(date: string, mode: string): Promise<{ date: string; 
   console.log(`   Fetched all details, now summarizing...`);
 
   // Check for API key
-  if (!API_KEY) {
+  if (!llmConfig.apiKey) {
     console.log(`   ⚠️ No API key found, running in simulation mode`);
   }
 
