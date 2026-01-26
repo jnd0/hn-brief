@@ -14,7 +14,7 @@ import {
     parseDateComponents,
     getPostTypeLabel,
     createLLMConfig
-} from '../shared/summarizer-core';
+} from '../../shared/summarizer-core';
 
 // ============================================================================
 // Environment Interface
