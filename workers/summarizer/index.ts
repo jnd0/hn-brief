@@ -39,8 +39,17 @@ export default {
     // Manual trigger via HTTP for testing
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
         const url = new URL(request.url);
-        const apiKey = env.NVIDIA_API_KEY || env.OPENROUTER_API_KEY || env.OPENAI_API_KEY || '';
-        if (url.searchParams.get("key") !== apiKey.substring(0, 10)) {
+
+        // Reuse createLLMConfig to get the active API key
+        let activeApiKey = '';
+        try {
+            const { config } = createLLMConfig(env);
+            activeApiKey = config.apiKey;
+        } catch (e) {
+            // No API key is configured
+        }
+
+        if (url.searchParams.get("key") !== activeApiKey.substring(0, 10)) {
             return new Response("Unauthorized", { status: 401 });
         }
 
