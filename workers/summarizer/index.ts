@@ -2,8 +2,8 @@
 
 import {
     type ProcessedStory,
-    type LLMConfig,
     type AlgoliaHit,
+    type LLMEnv,
     fetchTopStories,
     fetchStoryDetails,
     summarizeStory,
@@ -12,22 +12,20 @@ import {
     formatDigestMarkdown,
     getLondonDate,
     parseDateComponents,
-    getPostTypeLabel
-} from '../shared/summarizer-core';
+    getPostTypeLabel,
+    createLLMConfig
+} from '../../shared/summarizer-core';
 
 // ============================================================================
 // Environment Interface
 // ============================================================================
 
-interface Env {
-    OPENROUTER_API_KEY: string;
-    OPENROUTER_MODEL: string;
+interface Env extends LLMEnv {
+    // GitHub
     GITHUB_TOKEN: string;
     REPO_OWNER: string;
     REPO_NAME: string;
 }
-
-const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 // ============================================================================
 // Worker Handlers
@@ -41,7 +39,17 @@ export default {
     // Manual trigger via HTTP for testing
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
         const url = new URL(request.url);
-        if (url.searchParams.get("key") !== env.OPENROUTER_API_KEY?.substring(0, 10)) {
+
+        // Reuse createLLMConfig to get the active API key
+        let activeApiKey = '';
+        try {
+            const { config } = createLLMConfig(env);
+            activeApiKey = config.apiKey;
+        } catch (e) {
+            // No API key is configured
+        }
+
+        if (url.searchParams.get("key") !== activeApiKey.substring(0, 10)) {
             return new Response("Unauthorized", { status: 401 });
         }
 
@@ -61,12 +69,9 @@ async function generateDailySummary(env: Env) {
 
     console.log(`Generating summary for ${date}`);
 
-    // Create LLM config from environment
-    const llmConfig: LLMConfig = {
-        apiKey: env.OPENROUTER_API_KEY,
-        apiUrl: OPENROUTER_API_URL,
-        model: env.OPENROUTER_MODEL
-    };
+    // Create LLM config from environment using shared utility
+    const { config: llmConfig, provider } = createLLMConfig(env);
+    console.log(`Using ${provider} with model: ${llmConfig.model}`);
 
     // 1. Fetch Stories (top 20 by points)
     const stories = await fetchTopStories();

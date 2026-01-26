@@ -8,7 +8,6 @@
 import { mkdir } from "fs/promises";
 import {
   type ProcessedStory,
-  type LLMConfig,
   type AlgoliaHit,
   fetchTopStories,
   fetchStoryDetails,
@@ -16,33 +15,24 @@ import {
   generateDigest,
   formatArticleMarkdown,
   formatDigestMarkdown,
-  getPostTypeLabel
+  getPostTypeLabel,
+  createLLMConfig
 } from '../shared/summarizer-core';
 
 // ============================================================================
 // Configuration
 // ============================================================================
 
-// LLM Provider Configuration
-// Priority: OpenRouter > OpenAI-compatible
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+// Create LLM config from environment variables
+const { config: llmConfig, provider } = createLLMConfig({
+  NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
+  OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  LLM_API_URL: process.env.LLM_API_URL,
+  LLM_MODEL: process.env.LLM_MODEL
+});
 
-// Determine which API to use
-const USE_OPENROUTER = !!OPENROUTER_API_KEY;
-const API_KEY = OPENROUTER_API_KEY || OPENAI_API_KEY;
-const API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const MODEL = OPENROUTER_MODEL;
-
-// Create LLM config
-const llmConfig: LLMConfig = {
-  apiKey: API_KEY || '',
-  apiUrl: API_URL,
-  model: MODEL || 'xiaomi/mimo-v2-flash:free'
-};
-
-console.log(`Using ${USE_OPENROUTER ? 'OpenRouter' : 'OpenAI'} with model: ${MODEL}`);
+console.log(`Using ${provider} with model: ${llmConfig.model}`);
 
 // ============================================================================
 // CLI Arguments
@@ -165,7 +155,7 @@ async function processDate(date: string, mode: string): Promise<{ date: string; 
   console.log(`   Fetched all details, now summarizing...`);
 
   // Check for API key
-  if (!API_KEY) {
+  if (!llmConfig.apiKey) {
     console.log(`   ⚠️ No API key found, running in simulation mode`);
   }
 

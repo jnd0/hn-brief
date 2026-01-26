@@ -79,13 +79,84 @@ interface CommentSelectionOptions {
 
 export const ALGOLIA_API = "https://hn.algolia.com/api/v1";
 
-// Comment selection configuration (configurable via environment variables)
-const MAX_COMMENT_CHARS = parseInt(process.env.MAX_COMMENT_CHARS || '15000', 10);
-const MAX_COMMENTS_PER_ROOT = parseInt(process.env.MAX_COMMENTS_PER_ROOT || '3', 10);
+// LLM Provider Defaults
+const DEFAULT_NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
+const DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const DEFAULT_NVIDIA_MODEL = "moonshotai/kimi-k2-thinking";
+const DEFAULT_OPENROUTER_MODEL = "xiaomi/mimo-v2-flash:free";
+
+// ============================================================================
+// LLM Configuration Factory
+// ============================================================================
+
+/**
+ * Environment variables for LLM configuration
+ */
+export interface LLMEnv {
+    NVIDIA_API_KEY?: string;
+    OPENROUTER_API_KEY?: string;
+    OPENAI_API_KEY?: string;
+    LLM_API_URL?: string;
+    LLM_MODEL?: string;
+}
+
+/**
+ * Create LLM config from environment variables.
+ * Priority: Nvidia NIM > OpenRouter > OpenAI (explicit URL/model required)
+ * 
+ * @returns LLM config and provider name for logging
+ * @throws Error if using OpenAI without explicit URL/model
+ */
+export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: string } {
+    if (env.NVIDIA_API_KEY) {
+        return {
+            config: {
+                apiKey: env.NVIDIA_API_KEY,
+                apiUrl: env.LLM_API_URL || DEFAULT_NVIDIA_URL,
+                model: env.LLM_MODEL || DEFAULT_NVIDIA_MODEL
+            },
+            provider: 'Nvidia NIM'
+        };
+    }
+
+    if (env.OPENROUTER_API_KEY) {
+        return {
+            config: {
+                apiKey: env.OPENROUTER_API_KEY,
+                apiUrl: env.LLM_API_URL || DEFAULT_OPENROUTER_URL,
+                model: env.LLM_MODEL || DEFAULT_OPENROUTER_MODEL
+            },
+            provider: 'OpenRouter'
+        };
+    }
+
+    if (env.OPENAI_API_KEY) {
+        // OpenAI-compatible requires explicit URL and model
+        if (!env.LLM_API_URL || !env.LLM_MODEL) {
+            throw new Error(
+                'When using OPENAI_API_KEY, you must also set LLM_API_URL and LLM_MODEL'
+            );
+        }
+        return {
+            config: {
+                apiKey: env.OPENAI_API_KEY,
+                apiUrl: env.LLM_API_URL,
+                model: env.LLM_MODEL
+            },
+            provider: 'OpenAI-compatible'
+        };
+    }
+
+    throw new Error('No LLM API key found. Set NVIDIA_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.');
+}
 
 // ============================================================================
 // Comment Selection Algorithm
 // ============================================================================
+
+// Comment selection configuration (configurable via environment variables)
+const MAX_COMMENT_CHARS = parseInt(process.env.MAX_COMMENT_CHARS || '15000', 10);
+const MAX_COMMENTS_PER_ROOT = parseInt(process.env.MAX_COMMENTS_PER_ROOT || '3', 10);
 
 /**
  * Strip HTML tags from text for accurate length scoring
@@ -493,7 +564,7 @@ export async function summarizeStory(
                     { role: "system", content: "You are a helpful assistant summarizing Hacker News." },
                     { role: "user", content: prompt }
                 ],
-                temperature: 0.3
+                temperature: 0.7
             })
         });
 
