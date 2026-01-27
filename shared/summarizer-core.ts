@@ -118,16 +118,84 @@ function supportsThinkingConfig(config: LLMConfig): boolean {
 }
 
 function resolveThinkingParams(config: LLMConfig, defaultThinking: boolean): {
-    thinking: boolean;
+    thinking: any;
     temperature: number;
     topP: number;
 } {
     const thinking = typeof config.thinking === 'boolean' ? config.thinking : defaultThinking;
     return {
-        thinking,
+        thinking: thinking ? { type: "enabled" } : false,
         temperature: thinking ? 1.0 : 0.6,
         topP: 0.95
     };
+}
+
+/**
+ * Helper to fetch and parse SSE stream from LLM API.
+ * Handles both "reasoning_content" and "content" fields.
+ */
+async function fetchStreamCompletion(
+    url: string,
+    apiKey: string,
+    body: any
+): Promise<string> {
+    const response = await fetch(url, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({ ...body, stream: true })
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API Error ${response.status}: ${errorText.slice(0, 500)}`);
+    }
+
+    if (!response.body) throw new Error("No response body");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    let finalContent = "";
+    // Note: We are consuming reasoning_content from the stream but currently only returning 
+    // the final content_summary logic expects "content". 
+    // If we need to capture reasoning for debugging, we can collect it here too.
+
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || !trimmed.startsWith("data: ")) continue;
+
+                const dataStr = trimmed.slice(6);
+                if (dataStr === "[DONE]") continue;
+
+                try {
+                    const json = JSON.parse(dataStr);
+                    const delta = json.choices?.[0]?.delta;
+                    if (delta?.content) {
+                        finalContent += delta.content;
+                    }
+                    // We can also capture delta.reasoning_content if needed
+                } catch (e) {
+                    console.error("Error parsing stream line:", dataStr.slice(0, 100));
+                }
+            }
+        }
+    } finally {
+        reader.releaseLock();
+    }
+
+    return finalContent;
 }
 
 /**
@@ -598,67 +666,43 @@ export async function summarizeStory(
         const thinkingParams = useThinkingConfig
             ? resolveThinkingParams(config, false)
             : null;
+
         const requestBody: Record<string, unknown> = {
             model: config.model,
             messages: [
                 { role: "system", content: "You are a helpful assistant summarizing Hacker News." },
                 { role: "user", content: prompt }
             ],
-            temperature: thinkingParams ? thinkingParams.temperature : 0.7
+            temperature: thinkingParams ? thinkingParams.temperature : 0.7,
+            max_tokens: 16000 // Ensure enough tokens for reasoning
         };
 
         if (thinkingParams) {
             requestBody.top_p = thinkingParams.topP;
+            // thinkingParams.thinking is now { type: "enabled" } or false
             requestBody.chat_template_kwargs = { thinking: thinkingParams.thinking };
         }
 
-        const response = await fetch(config.apiUrl, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${config.apiKey}`
-            },
-            body: JSON.stringify(requestBody)
-        });
-
-        // Log response status for debugging
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`API error for "${story.title}": ${response.status} - ${errorText.slice(0, 500)}`);
+        let content = "";
+        try {
+            content = await fetchStreamCompletion(config.apiUrl, config.apiKey, requestBody);
+        } catch (apiError: any) {
+            console.error(`API error for "${story.title}": ${apiError.message}`);
             return {
                 id: story.objectID,
                 title: story.title,
                 url: story.url || `https://news.ycombinator.com/item?id=${story.objectID}`,
                 points: story.points,
                 num_comments: story.num_comments,
-                summary: `API error: ${response.status}`,
-                discussion_summary: `API error: ${response.status}`,
+                summary: `API error: ${apiError.message.slice(0, 50)}`,
+                discussion_summary: `API error: ${apiError.message.slice(0, 50)}`,
                 postType
             };
         }
 
-        const result = await response.json() as { choices?: { message?: { content?: string } }[], error?: { message?: string } };
-
-        // Check for API error in response body
-        if (result.error) {
-            console.error(`API returned error for "${story.title}": ${result.error.message}`);
-            return {
-                id: story.objectID,
-                title: story.title,
-                url: story.url || `https://news.ycombinator.com/item?id=${story.objectID}`,
-                points: story.points,
-                num_comments: story.num_comments,
-                summary: `API error: ${result.error.message}`,
-                discussion_summary: `API error: ${result.error.message}`,
-                postType
-            };
-        }
-
-        const content = result.choices?.[0]?.message?.content || "";
-
-        // Log if content is empty
+        // Log if content is empty (might be thinking only?)
         if (!content) {
-            console.error(`Empty response for "${story.title}": ${JSON.stringify(result).slice(0, 500)}`);
+            console.error(`Empty response for "${story.title}"`);
         }
 
         const parsed = parseSummaryResponse(content);
@@ -702,6 +746,7 @@ export async function generateDigest(
         const thinkingParams = useThinkingConfig
             ? resolveThinkingParams(config, true)
             : null;
+
         const requestBody: Record<string, unknown> = {
             model: config.model,
             messages: [
@@ -709,10 +754,7 @@ export async function generateDigest(
                 { role: "user", content: prompt }
             ],
             temperature: thinkingParams ? thinkingParams.temperature : 0.5,
-            max_tokens: 4000,
-            reasoning: {
-                enabled: true
-            }
+            max_tokens: 16000 // Ensure enough tokens
         };
 
         if (thinkingParams) {
@@ -720,17 +762,14 @@ export async function generateDigest(
             requestBody.chat_template_kwargs = { thinking: thinkingParams.thinking };
         }
 
-        const response = await fetch(config.apiUrl, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${config.apiKey}`
-            },
-            body: JSON.stringify(requestBody)
-        });
+        try {
+            const content = await fetchStreamCompletion(config.apiUrl, config.apiKey, requestBody);
+            return content || "Digest generation failed (empty content).";
+        } catch (apiError: any) {
+            console.error(`Digest API error: ${apiError.message}`);
+            return "Digest generation failed due to API error.";
+        }
 
-        const result = await response.json() as { choices?: { message?: { content?: string } }[] };
-        return result.choices?.[0]?.message?.content || "Digest generation failed.";
     } catch (e) {
         console.error("Digest generation failed", e);
         return "Digest generation failed.";

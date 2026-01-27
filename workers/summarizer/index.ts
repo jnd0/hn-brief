@@ -162,20 +162,22 @@ function utf8_to_b64(str: string): string {
     );
 }
 
-async function commitToGitHub(env: Env, path: string, content: string, message: string) {
+async function commitToGitHub(env: Env, path: string, content: string, message: string, shaOverride?: string) {
     const url = `https://api.github.com/repos/${env.REPO_OWNER}/${env.REPO_NAME}/contents/${path}`;
 
-    // Get SHA if file exists
-    let sha: string | undefined;
-    try {
-        const check = await fetch(url, {
-            headers: { "User-Agent": "HN-Brief-Worker", "Authorization": `token ${env.GITHUB_TOKEN}` }
-        });
-        if (check.ok) {
-            const data: any = await check.json();
-            sha = data.sha;
-        }
-    } catch { }
+    // Get SHA if file exists and not provided
+    let sha = shaOverride;
+    if (!sha) {
+        try {
+            const check = await fetch(url, {
+                headers: { "User-Agent": "HN-Brief-Worker", "Authorization": `token ${env.GITHUB_TOKEN}` }
+            });
+            if (check.ok) {
+                const data: any = await check.json();
+                sha = data.sha;
+            }
+        } catch { }
+    }
 
     const res = await fetch(url, {
         method: "PUT",
@@ -195,10 +197,12 @@ async function commitToGitHub(env: Env, path: string, content: string, message: 
 async function updateArchive(env: Env, date: string, storyCount: number) {
     const archivePath = "summaries/archive.json";
     let archive: any[] = [];
+    let currentSha: string | undefined;
 
     try {
-        const { content } = await fetchGitHubFile(env, archivePath);
+        const { content, sha } = await fetchGitHubFile(env, archivePath);
         archive = JSON.parse(content);
+        currentSha = sha;
     } catch {
         // File doesn't exist yet
     }
@@ -220,5 +224,5 @@ async function updateArchive(env: Env, date: string, storyCount: number) {
     // Sort by date descending
     archive.sort((a, b) => b.date.localeCompare(a.date));
 
-    await commitToGitHub(env, archivePath, JSON.stringify(archive, null, 2), `Update archive for ${date}`);
+    await commitToGitHub(env, archivePath, JSON.stringify(archive, null, 2), `Update archive for ${date}`, currentSha);
 }

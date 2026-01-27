@@ -116,3 +116,28 @@ score = 2.0 * log(1 + descendantCount)   // Thread engagement
 - HTML stripped for scoring; deleted/empty comments skipped
 
 **To tune:** Modify weights in `scoreComment()` or budget in `selectAndFormatComments()`.
+
+## Inference Configuration (Thinking Protocol)
+
+To prevent timeouts and ensure high-quality reasoning with models like `kimi-k2.5`:
+
+1.  **Streaming (`stream: true`)**: Mandatory to prevent `524` timeouts during long reasoning pauses.
+2.  **Parameters**:
+    - **Thinking Mode**: `temperature: 1.0`, `top_p: 0.95`, `thinking: { type: "enabled" }`
+    - **Instant Mode**: `temperature: 0.6`, `top_p: 0.95`, `thinking: false`
+3.  **Max Tokens**: Set to `>= 16000` to prevent truncation of reasoning content.
+4.  **Error Handling**: Robust checks for `!response.ok` (handling HTML error pages) and JSON parsing errors.
+
+## Cloudflare Worker Limits
+
+**Subrequest Limit (50 fetch calls):**
+The `summarizer` worker is optimized to stay continuously under the strict 50 subrequest limit per execution.
+
+**Usage Breakdown (~48 fetches):**
+- **Algolia API**: 21 fetches (1 top stories + 20 details)
+- **LLM API**: 21 fetches (20 story summaries + 1 digest)
+- **GitHub API**: 6 fetches (3 commit puts + 3 get/check calls)
+
+**Optimization Strategy:**
+- The worker reuses the `SHA` from the `fetchGitHubFile` call when updating `archive.json` to save 1 fetch call.
+- **Critical**: Do not add extra external API calls without verifying against this limit.
