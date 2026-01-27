@@ -98,40 +98,68 @@ async function generateDailySummary(env: Env) {
     console.log(`Fetched all story details.`);
 
     // 3. Process LLM calls in SMALL BATCHES to respect 40 rpm limit
-    // 40 rpm = batch of 5 every 7.5 seconds is safe
-    const BATCH_SIZE = 5;
-    const BATCH_DELAY_MS = 8000; // 8 seconds between batches
+    // Reduced batch size to minimize timeout risk
+    const BATCH_SIZE = 3;
+    const BATCH_DELAY_MS = 5000; // 5 seconds between batches
     const processedStories: ProcessedStory[] = [];
 
     for (let i = 0; i < storyDetails.length; i += BATCH_SIZE) {
         const batch = storyDetails.slice(i, i + BATCH_SIZE);
         console.log(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(storyDetails.length / BATCH_SIZE)} (${batch.length} stories)...`);
 
-        const batchResults = await Promise.all(
-            batch.map(async ({ hit, details }: { hit: AlgoliaHit; details: any }) => {
-                const summary = await summarizeStory(hit, details.children || [], llmConfig);
-                return summary;
-            })
-        );
+        const batchPromises = batch.map(async ({ hit, details }: { hit: AlgoliaHit; details: any }) => {
+            try {
+                return await summarizeStory(hit, details.children || [], llmConfig);
+            } catch (error) {
+                console.error(`Failed to summarize "${hit.title}":`, error);
+                return null;
+            }
+        });
 
-        processedStories.push(...batchResults);
+        const results = await Promise.all(batchPromises);
+        const successful = results.filter((s): s is ProcessedStory => s !== null);
+        processedStories.push(...successful);
 
         // Delay between batches to respect 40 rpm limit
         if (i + BATCH_SIZE < storyDetails.length) {
             await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
         }
     }
-    console.log(`Summarized ${processedStories.length} stories.`);
+    console.log(`Summarized ${processedStories.length} stories successfully.`);
+
+    if (processedStories.length === 0) {
+        console.error("No stories were successfully summarized. Aborting.");
+        return;
+    }
 
     // 4. Generate Markdown using shared formatters
-    const articleMd = formatArticleMarkdown(processedStories, date);
-    const digestContent = await generateDigest(processedStories, llmConfig);
-    const digestMd = formatDigestMarkdown(digestContent, date, processedStories.length);
+    let articleMd = "";
+    let digestMd = "";
+    
+    try {
+        articleMd = formatArticleMarkdown(processedStories, date);
+        
+        console.log("Generating digest...");
+        const digestContent = await generateDigest(processedStories, llmConfig);
+        digestMd = formatDigestMarkdown(digestContent, date, processedStories.length);
+    } catch (e) {
+        console.error("CRITICAL ERROR during digest generation:", e);
+        // Continue with article-only processing if digest fails
+        if (articleMd) {
+            console.log("Continuing with article-only processing...");
+        } else {
+            return;
+        }
+    }
 
     // 5. Commit both files to GitHub
     const folderPath = `summaries/${year}/${month}`;
     await commitToGitHub(env, `${folderPath}/${day}.md`, articleMd, `Add articles for ${date}`);
-    await commitToGitHub(env, `${folderPath}/${day}-digest.md`, digestMd, `Add digest for ${date}`);
+    
+    // Only commit digest if it was successfully generated
+    if (digestMd) {
+        await commitToGitHub(env, `${folderPath}/${day}-digest.md`, digestMd, `Add digest for ${date}`);
+    }
 
     // 6. Update Archive Index
     await updateArchive(env, date, processedStories.length);
