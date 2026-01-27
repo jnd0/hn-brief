@@ -87,6 +87,8 @@ const DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_NVIDIA_MODEL = "moonshotai/kimi-k2.5";
 const DEFAULT_OPENROUTER_MODEL = "xiaomi/mimo-v2-flash:free";
 
+export const MAX_TOKENS_FOR_REASONING = 16000;
+
 // ============================================================================
 // LLM Configuration Factory
 // ============================================================================
@@ -118,7 +120,7 @@ function supportsThinkingConfig(config: LLMConfig): boolean {
 }
 
 function resolveThinkingParams(config: LLMConfig, defaultThinking: boolean): {
-    thinking: any;
+    thinking: { type: "enabled" } | false;
     temperature: number;
     topP: number;
 } {
@@ -137,7 +139,7 @@ function resolveThinkingParams(config: LLMConfig, defaultThinking: boolean): {
 async function fetchStreamCompletion(
     url: string,
     apiKey: string,
-    body: any
+    body: Record<string, unknown>
 ): Promise<string> {
     const response = await fetch(url, {
         method: "POST",
@@ -674,7 +676,7 @@ export async function summarizeStory(
                 { role: "user", content: prompt }
             ],
             temperature: thinkingParams ? thinkingParams.temperature : 0.7,
-            max_tokens: 16000 // Ensure enough tokens for reasoning
+            max_tokens: MAX_TOKENS_FOR_REASONING // Ensure enough tokens for reasoning
         };
 
         if (thinkingParams) {
@@ -754,7 +756,7 @@ export async function generateDigest(
                 { role: "user", content: prompt }
             ],
             temperature: thinkingParams ? thinkingParams.temperature : 0.5,
-            max_tokens: 16000 // Ensure enough tokens
+            max_tokens: MAX_TOKENS_FOR_REASONING // Ensure enough tokens for reasoning
         };
 
         if (thinkingParams) {
