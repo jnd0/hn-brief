@@ -60,8 +60,13 @@ hn-brief/
 ## Environment Variables
 
 Required for LLM summarization:
-- `OPENROUTER_API_KEY` - Primary LLM provider
-- `OPENROUTER_MODEL` - Model to use (default: `xiaomi/mimo-v2-flash:free`)
+- `NVIDIA_API_KEY` - Primary LLM provider (default model: `moonshotai/kimi-k2.5`)
+- `OPENROUTER_API_KEY` - Fallback LLM provider
+- `LLM_MODEL` - Override model name (provider-specific)
+- `LLM_THINKING_FORCE` - Force NIM thinking mode for both articles and digest (`true`/`false`)
+- `LLM_THINKING` - Alias for `LLM_THINKING_FORCE`
+
+Default behavior with Nvidia NIM: article summaries use Instant mode (temp 0.6), digest uses Thinking mode (temp 1.0). Set `LLM_THINKING_FORCE` to force both.
 
 For GitHub auto-commit (workers only):
 - `GITHUB_TOKEN`, `REPO_OWNER`, `REPO_NAME`
@@ -80,6 +85,7 @@ Comment selection (optional):
 ## API Integration
 
 - **HN Algolia API**: `https://hn.algolia.com/api/v1` for story fetching
+- **Nvidia NIM**: `https://integrate.api.nvidia.com/v1/chat/completions`
 - **OpenRouter**: OpenAI-compatible endpoint for LLM calls
 - **GitHub API**: For automated commits (workers)
 

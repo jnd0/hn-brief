@@ -29,7 +29,9 @@ const { config: llmConfig, provider } = createLLMConfig({
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   LLM_API_URL: process.env.LLM_API_URL,
-  LLM_MODEL: process.env.LLM_MODEL
+  LLM_MODEL: process.env.LLM_MODEL,
+  LLM_THINKING_FORCE: process.env.LLM_THINKING_FORCE,
+  LLM_THINKING: process.env.LLM_THINKING
 });
 
 console.log(`Using ${provider} with model: ${llmConfig.model}`);
