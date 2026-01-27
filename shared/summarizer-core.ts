@@ -26,6 +26,8 @@ export interface LLMConfig {
     apiKey: string;
     apiUrl: string;
     model: string;
+    provider?: 'nvidia' | 'openrouter' | 'openai-compatible';
+    thinking?: boolean;
 }
 
 export interface AlgoliaHit {
@@ -82,7 +84,7 @@ export const ALGOLIA_API = "https://hn.algolia.com/api/v1";
 // LLM Provider Defaults
 const DEFAULT_NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
 const DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_NVIDIA_MODEL = "moonshotai/kimi-k2-thinking";
+const DEFAULT_NVIDIA_MODEL = "moonshotai/kimi-k2.5";
 const DEFAULT_OPENROUTER_MODEL = "xiaomi/mimo-v2-flash:free";
 
 // ============================================================================
@@ -98,6 +100,34 @@ export interface LLMEnv {
     OPENAI_API_KEY?: string;
     LLM_API_URL?: string;
     LLM_MODEL?: string;
+    LLM_THINKING_FORCE?: string;
+    LLM_THINKING?: string;
+}
+
+function parseThinking(value?: string): boolean | undefined {
+    if (!value) return undefined;
+    const normalized = value.trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+    return undefined;
+}
+
+function supportsThinkingConfig(config: LLMConfig): boolean {
+    if (config.provider === 'nvidia') return true;
+    return config.apiUrl.includes('integrate.api.nvidia.com');
+}
+
+function resolveThinkingParams(config: LLMConfig, defaultThinking: boolean): {
+    thinking: boolean;
+    temperature: number;
+    topP: number;
+} {
+    const thinking = typeof config.thinking === 'boolean' ? config.thinking : defaultThinking;
+    return {
+        thinking,
+        temperature: thinking ? 1.0 : 0.6,
+        topP: 0.95
+    };
 }
 
 /**
@@ -108,12 +138,15 @@ export interface LLMEnv {
  * @throws Error if using OpenAI without explicit URL/model
  */
 export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: string } {
+    const thinking = parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
     if (env.NVIDIA_API_KEY) {
         return {
             config: {
                 apiKey: env.NVIDIA_API_KEY,
                 apiUrl: env.LLM_API_URL || DEFAULT_NVIDIA_URL,
-                model: env.LLM_MODEL || DEFAULT_NVIDIA_MODEL
+                model: env.LLM_MODEL || DEFAULT_NVIDIA_MODEL,
+                provider: 'nvidia',
+                thinking
             },
             provider: 'Nvidia NIM'
         };
@@ -124,7 +157,9 @@ export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: str
             config: {
                 apiKey: env.OPENROUTER_API_KEY,
                 apiUrl: env.LLM_API_URL || DEFAULT_OPENROUTER_URL,
-                model: env.LLM_MODEL || DEFAULT_OPENROUTER_MODEL
+                model: env.LLM_MODEL || DEFAULT_OPENROUTER_MODEL,
+                provider: 'openrouter',
+                thinking
             },
             provider: 'OpenRouter'
         };
@@ -141,7 +176,9 @@ export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: str
             config: {
                 apiKey: env.OPENAI_API_KEY,
                 apiUrl: env.LLM_API_URL,
-                model: env.LLM_MODEL
+                model: env.LLM_MODEL,
+                provider: 'openai-compatible',
+                thinking
             },
             provider: 'OpenAI-compatible'
         };
@@ -557,20 +594,31 @@ export async function summarizeStory(
     const prompt = buildSummaryPrompt(story, comments);
 
     try {
+        const useThinkingConfig = supportsThinkingConfig(config);
+        const thinkingParams = useThinkingConfig
+            ? resolveThinkingParams(config, false)
+            : null;
+        const requestBody: Record<string, unknown> = {
+            model: config.model,
+            messages: [
+                { role: "system", content: "You are a helpful assistant summarizing Hacker News." },
+                { role: "user", content: prompt }
+            ],
+            temperature: thinkingParams ? thinkingParams.temperature : 0.7
+        };
+
+        if (thinkingParams) {
+            requestBody.top_p = thinkingParams.topP;
+            requestBody.chat_template_kwargs = { thinking: thinkingParams.thinking };
+        }
+
         const response = await fetch(config.apiUrl, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
                 "Authorization": `Bearer ${config.apiKey}`
             },
-            body: JSON.stringify({
-                model: config.model,
-                messages: [
-                    { role: "system", content: "You are a helpful assistant summarizing Hacker News." },
-                    { role: "user", content: prompt }
-                ],
-                temperature: 0.7
-            })
+            body: JSON.stringify(requestBody)
         });
 
         // Log response status for debugging
@@ -650,24 +698,35 @@ export async function generateDigest(
     const prompt = buildDigestPrompt(stories);
 
     try {
+        const useThinkingConfig = supportsThinkingConfig(config);
+        const thinkingParams = useThinkingConfig
+            ? resolveThinkingParams(config, true)
+            : null;
+        const requestBody: Record<string, unknown> = {
+            model: config.model,
+            messages: [
+                { role: "system", content: "You are a tech journalist writing a daily Hacker News digest." },
+                { role: "user", content: prompt }
+            ],
+            temperature: thinkingParams ? thinkingParams.temperature : 0.5,
+            max_tokens: 4000,
+            reasoning: {
+                enabled: true
+            }
+        };
+
+        if (thinkingParams) {
+            requestBody.top_p = thinkingParams.topP;
+            requestBody.chat_template_kwargs = { thinking: thinkingParams.thinking };
+        }
+
         const response = await fetch(config.apiUrl, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
                 "Authorization": `Bearer ${config.apiKey}`
             },
-            body: JSON.stringify({
-                model: config.model,
-                messages: [
-                    { role: "system", content: "You are a tech journalist writing a daily Hacker News digest." },
-                    { role: "user", content: prompt }
-                ],
-                temperature: 0.5,
-                max_tokens: 4000,
-                reasoning: {
-                    enabled: true
-                }
-            })
+            body: JSON.stringify(requestBody)
         });
 
         const result = await response.json() as { choices?: { message?: { content?: string } }[] };
