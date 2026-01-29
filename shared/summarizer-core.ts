@@ -30,6 +30,11 @@ export interface LLMConfig {
     thinking?: boolean;
 }
 
+export interface LLMLogger {
+    info: (message: string) => void;
+    error: (message: string) => void;
+}
+
 export interface AlgoliaHit {
     objectID: string;
     title: string;
@@ -773,6 +778,30 @@ export async function probeLLM(config: LLMConfig): Promise<{ ok: boolean; error?
     } catch (error) {
         return { ok: false, error: getErrorMessage(error) };
     }
+}
+
+export async function resolveLLMConfigWithFallback(
+    env: LLMEnv,
+    logger: LLMLogger = { info: () => {}, error: () => {} }
+): Promise<{ config: LLMConfig; provider: string; usedFallback: boolean }>{
+    const primary = createLLMConfig(env);
+    logger.info(`Primary LLM: ${primary.provider} with model: ${primary.config.model}`);
+
+    const xiaomiFallback = createXiaomiConfig(env);
+    if (primary.provider === 'Nvidia NIM' && xiaomiFallback) {
+        logger.info('Running Nvidia health check...');
+        const probe = await probeLLM(primary.config);
+        if (!probe.ok) {
+            const detail = probe.error ? ` (${probe.error})` : '';
+            logger.error(`Nvidia health check failed${detail}. Falling back to ${xiaomiFallback.provider}.`);
+            logger.info(`Active LLM: ${xiaomiFallback.provider} with model: ${xiaomiFallback.config.model}`);
+            return { config: xiaomiFallback.config, provider: xiaomiFallback.provider, usedFallback: true };
+        }
+        logger.info('Nvidia health check ok.');
+    }
+
+    logger.info(`Active LLM: ${primary.provider} with model: ${primary.config.model}`);
+    return { config: primary.config, provider: primary.provider, usedFallback: false };
 }
 
 /**

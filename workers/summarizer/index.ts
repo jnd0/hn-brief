@@ -13,9 +13,8 @@ import {
     getLondonDate,
     parseDateComponents,
     getPostTypeLabel,
-    createLLMConfig,
-    createXiaomiConfig,
-    probeLLM
+    resolveLLMConfigWithFallback,
+    createLLMConfig
 } from '../../shared/summarizer-core';
 
 // ============================================================================
@@ -75,29 +74,13 @@ async function generateDailySummary(env: Env) {
     let llmConfig;
     let provider;
     try {
-        const result = createLLMConfig(env);
+        const result = await resolveLLMConfigWithFallback(env, console);
         llmConfig = result.config;
         provider = result.provider;
-        console.log(`Primary LLM: ${provider} with model: ${llmConfig.model}`);
     } catch (e) {
         console.error(`Failed to create LLM config: ${e}`);
         console.error(`Available env keys: NVIDIA_API_KEY=${!!env.NVIDIA_API_KEY}, OPENROUTER_API_KEY=${!!env.OPENROUTER_API_KEY}, OPENAI_API_KEY=${!!env.OPENAI_API_KEY}`);
         throw e;
-    }
-
-    const xiaomiFallback = createXiaomiConfig(env);
-    if (provider === 'Nvidia NIM' && xiaomiFallback) {
-        console.log('Running Nvidia health check...');
-        const probe = await probeLLM(llmConfig);
-        if (!probe.ok) {
-            const detail = probe.error ? ` (${probe.error})` : '';
-            console.error(`Nvidia health check failed${detail}. Falling back to ${xiaomiFallback.provider}.`);
-            llmConfig = xiaomiFallback.config;
-            provider = xiaomiFallback.provider;
-            console.log(`Active LLM: ${provider} with model: ${llmConfig.model}`);
-        } else {
-            console.log('Nvidia health check ok.');
-        }
     }
 
     // 1. Fetch Stories (top 20 by points)
