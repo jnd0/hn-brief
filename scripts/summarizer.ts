@@ -16,7 +16,9 @@ import {
   formatArticleMarkdown,
   formatDigestMarkdown,
   getPostTypeLabel,
-  createLLMConfig
+  createLLMConfig,
+  createXiaomiConfig,
+  probeLLM
 } from '../shared/summarizer-core';
 
 // ============================================================================
@@ -24,17 +26,43 @@ import {
 // ============================================================================
 
 // Create LLM config from environment variables
-const { config: llmConfig, provider } = createLLMConfig({
+let { config: llmConfig, provider } = createLLMConfig({
   NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  XIAOMI_API_KEY: process.env.XIAOMI_API_KEY,
+  XIAOMI_API_URL: process.env.XIAOMI_API_URL,
+  XIAOMI_MODEL: process.env.XIAOMI_MODEL,
   LLM_API_URL: process.env.LLM_API_URL,
   LLM_MODEL: process.env.LLM_MODEL,
   LLM_THINKING_FORCE: process.env.LLM_THINKING_FORCE,
   LLM_THINKING: process.env.LLM_THINKING
 });
 
-console.log(`Using ${provider} with model: ${llmConfig.model}`);
+console.log(`Primary LLM: ${provider} with model: ${llmConfig.model}`);
+
+const xiaomiFallback = createXiaomiConfig({
+  XIAOMI_API_KEY: process.env.XIAOMI_API_KEY,
+  XIAOMI_API_URL: process.env.XIAOMI_API_URL,
+  XIAOMI_MODEL: process.env.XIAOMI_MODEL,
+  LLM_THINKING_FORCE: process.env.LLM_THINKING_FORCE,
+  LLM_THINKING: process.env.LLM_THINKING
+});
+
+if (provider === 'Nvidia NIM' && xiaomiFallback) {
+  console.log('Running Nvidia health check...');
+  const probe = await probeLLM(llmConfig);
+  if (!probe.ok) {
+    const detail = probe.error ? ` (${probe.error})` : '';
+    console.error(`Nvidia health check failed${detail}. Falling back to ${xiaomiFallback.provider}.`);
+    llmConfig = xiaomiFallback.config;
+    provider = xiaomiFallback.provider;
+  } else {
+    console.log('Nvidia health check ok.');
+  }
+}
+
+console.log(`Active LLM: ${provider} with model: ${llmConfig.model}`);
 
 // ============================================================================
 // CLI Arguments
