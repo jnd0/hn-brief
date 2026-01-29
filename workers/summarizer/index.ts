@@ -13,6 +13,7 @@ import {
     getLondonDate,
     parseDateComponents,
     getPostTypeLabel,
+    resolveLLMConfigWithFallback,
     createLLMConfig
 } from '../../shared/summarizer-core';
 
@@ -73,10 +74,9 @@ async function generateDailySummary(env: Env) {
     let llmConfig;
     let provider;
     try {
-        const result = createLLMConfig(env);
+        const result = await resolveLLMConfigWithFallback(env, console);
         llmConfig = result.config;
         provider = result.provider;
-        console.log(`Using ${provider} with model: ${llmConfig.model}`);
     } catch (e) {
         console.error(`Failed to create LLM config: ${e}`);
         console.error(`Available env keys: NVIDIA_API_KEY=${!!env.NVIDIA_API_KEY}, OPENROUTER_API_KEY=${!!env.OPENROUTER_API_KEY}, OPENAI_API_KEY=${!!env.OPENAI_API_KEY}`);

@@ -26,8 +26,13 @@ export interface LLMConfig {
     apiKey: string;
     apiUrl: string;
     model: string;
-    provider?: 'nvidia' | 'openrouter' | 'openai-compatible';
+    provider?: 'nvidia' | 'openrouter' | 'openai-compatible' | 'xiaomi';
     thinking?: boolean;
+}
+
+export interface LLMLogger {
+    info: (message: string) => void;
+    error: (message: string) => void;
 }
 
 export interface AlgoliaHit {
@@ -86,8 +91,14 @@ const DEFAULT_NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions
 const DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_NVIDIA_MODEL = "moonshotai/kimi-k2.5";
 const DEFAULT_OPENROUTER_MODEL = "xiaomi/mimo-v2-flash:free";
+const DEFAULT_XIAOMI_URL = "https://api.xiaomimimo.com/v1/chat/completions";
+const DEFAULT_XIAOMI_MODEL = "mimo-v2-flash";
 
 export const MAX_TOKENS_FOR_REASONING = 16000;
+export const MAX_TOKENS_SUMMARY = 1200;
+export const MAX_TOKENS_DIGEST = MAX_TOKENS_FOR_REASONING;
+const SUMMARY_TEMPERATURE = 0.6;
+const SUMMARY_TOP_P = 0.95;
 
 // ============================================================================
 // LLM Configuration Factory
@@ -100,6 +111,9 @@ export interface LLMEnv {
     NVIDIA_API_KEY?: string;
     OPENROUTER_API_KEY?: string;
     OPENAI_API_KEY?: string;
+    XIAOMI_API_KEY?: string;
+    XIAOMI_API_URL?: string;
+    XIAOMI_MODEL?: string;
     LLM_API_URL?: string;
     LLM_MODEL?: string;
     LLM_THINKING_FORCE?: string;
@@ -112,6 +126,17 @@ function parseThinking(value?: string): boolean | undefined {
     if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
     if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
     return undefined;
+}
+
+function truncateText(text: string, maxLength: number): string {
+    if (text.length <= maxLength) return text;
+    return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function getErrorMessage(error: unknown): string {
+    if (error instanceof Error && error.message) return error.message;
+    if (typeof error === 'string') return error;
+    return String(error);
 }
 
 function supportsThinkingConfig(config: LLMConfig): boolean {
@@ -132,6 +157,61 @@ function resolveThinkingParams(config: LLMConfig, defaultThinking: boolean): {
     };
 }
 
+async function buildApiError(response: Response): Promise<Error> {
+    const contentType = response.headers.get("content-type") || "";
+    const errorText = await response.text();
+    let detail = errorText;
+    if (contentType.includes("application/json")) {
+        try {
+            const parsed = JSON.parse(errorText);
+            detail =
+                parsed?.error?.message ||
+                parsed?.error?.detail ||
+                parsed?.detail ||
+                parsed?.title ||
+                parsed?.message ||
+                errorText;
+        } catch {
+            detail = errorText;
+        }
+    }
+    const normalized = String(detail).replace(/\s+/g, " ").trim();
+    const snippet = normalized || response.statusText || "Unknown error";
+    return new Error(`API Error ${response.status}: ${truncateText(snippet, 500)}`);
+}
+
+async function fetchCompletion(
+    url: string,
+    apiKey: string,
+    body: Record<string, unknown>
+): Promise<string> {
+    const response = await fetch(url, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`
+        },
+        body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+        throw await buildApiError(response);
+    }
+
+    const data = await response.json() as any;
+    if (data?.error) {
+        const message = data.error?.message || data.error?.detail || JSON.stringify(data.error);
+        throw new Error(`API Error: ${truncateText(String(message), 500)}`);
+    }
+
+    const content =
+        data?.choices?.[0]?.message?.content ??
+        data?.choices?.[0]?.text ??
+        "";
+
+    return typeof content === 'string' ? content : '';
+}
+
 /**
  * Helper to fetch and parse SSE stream from LLM API.
  * Handles both "reasoning_content" and "content" fields.
@@ -139,7 +219,8 @@ function resolveThinkingParams(config: LLMConfig, defaultThinking: boolean): {
 async function fetchStreamCompletion(
     url: string,
     apiKey: string,
-    body: Record<string, unknown>
+    body: Record<string, unknown>,
+    options?: { stopAfter?: string[] }
 ): Promise<string> {
     const response = await fetch(url, {
         method: "POST",
@@ -151,8 +232,7 @@ async function fetchStreamCompletion(
     });
 
     if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`API Error ${response.status}: ${errorText.slice(0, 500)}`);
+        throw await buildApiError(response);
     }
 
     if (!response.body) throw new Error("No response body");
@@ -161,6 +241,8 @@ async function fetchStreamCompletion(
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
     let finalContent = "";
+    const stopAfter = options?.stopAfter?.filter(Boolean) ?? null;
+    let shouldStop = false;
     // Note: We are consuming reasoning_content from the stream but currently only returning 
     // the final content_summary logic expects "content". 
     // If we need to capture reasoning for debugging, we can collect it here too.
@@ -186,12 +268,21 @@ async function fetchStreamCompletion(
                     const delta = json.choices?.[0]?.delta;
                     if (delta?.content) {
                         finalContent += delta.content;
+                        if (stopAfter && stopAfter.length > 0) {
+                            const hasAllStops = stopAfter.every((seq) => finalContent.includes(seq));
+                            if (hasAllStops) {
+                                shouldStop = true;
+                                void reader.cancel();
+                                break;
+                            }
+                        }
                     }
                     // We can also capture delta.reasoning_content if needed
                 } catch (e) {
                     console.error("Error parsing stream line:", dataStr.slice(0, 100));
                 }
             }
+            if (shouldStop) break;
         }
     } finally {
         reader.releaseLock();
@@ -255,6 +346,21 @@ export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: str
     }
 
     throw new Error('No LLM API key found. Set NVIDIA_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.');
+}
+
+export function createXiaomiConfig(env: LLMEnv): { config: LLMConfig; provider: string } | null {
+    if (!env.XIAOMI_API_KEY) return null;
+    const thinking = parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
+    return {
+        config: {
+            apiKey: env.XIAOMI_API_KEY,
+            apiUrl: env.XIAOMI_API_URL || DEFAULT_XIAOMI_URL,
+            model: env.XIAOMI_MODEL || DEFAULT_XIAOMI_MODEL,
+            provider: 'xiaomi',
+            thinking
+        },
+        provider: 'Xiaomi MiMo'
+    };
 }
 
 // ============================================================================
@@ -652,6 +758,52 @@ export function parseSummaryResponse(content: string): { summary: string; discus
 // LLM API Calls
 // ============================================================================
 
+export async function probeLLM(config: LLMConfig): Promise<{ ok: boolean; error?: string }> {
+    const requestBody: Record<string, unknown> = {
+        model: config.model,
+        messages: [
+            { role: "system", content: "You are a health check." },
+            { role: "user", content: "Reply with OK." }
+        ],
+        temperature: 0,
+        max_tokens: 32
+    };
+
+    try {
+        const content = await fetchCompletion(config.apiUrl, config.apiKey, requestBody);
+        if (!content || !content.trim()) {
+            return { ok: false, error: 'empty response' };
+        }
+        return { ok: true };
+    } catch (error) {
+        return { ok: false, error: getErrorMessage(error) };
+    }
+}
+
+export async function resolveLLMConfigWithFallback(
+    env: LLMEnv,
+    logger: LLMLogger = { info: () => {}, error: () => {} }
+): Promise<{ config: LLMConfig; provider: string; usedFallback: boolean }>{
+    const primary = createLLMConfig(env);
+    logger.info(`Primary LLM: ${primary.provider} with model: ${primary.config.model}`);
+
+    const xiaomiFallback = createXiaomiConfig(env);
+    if (primary.provider === 'Nvidia NIM' && xiaomiFallback) {
+        logger.info('Running Nvidia health check...');
+        const probe = await probeLLM(primary.config);
+        if (!probe.ok) {
+            const detail = probe.error ? ` (${probe.error})` : '';
+            logger.error(`Nvidia health check failed${detail}. Falling back to ${xiaomiFallback.provider}.`);
+            logger.info(`Active LLM: ${xiaomiFallback.provider} with model: ${xiaomiFallback.config.model}`);
+            return { config: xiaomiFallback.config, provider: xiaomiFallback.provider, usedFallback: true };
+        }
+        logger.info('Nvidia health check ok.');
+    }
+
+    logger.info(`Active LLM: ${primary.provider} with model: ${primary.config.model}`);
+    return { config: primary.config, provider: primary.provider, usedFallback: false };
+}
+
 /**
  * Summarize a single story using the LLM
  */
@@ -665,9 +817,8 @@ export async function summarizeStory(
 
     try {
         const useThinkingConfig = supportsThinkingConfig(config);
-        const thinkingParams = useThinkingConfig
-            ? resolveThinkingParams(config, false)
-            : null;
+        const thinkingEnabled = useThinkingConfig && config.thinking === true;
+        const thinkingParams = thinkingEnabled ? resolveThinkingParams(config, false) : null;
 
         const requestBody: Record<string, unknown> = {
             model: config.model,
@@ -675,36 +826,45 @@ export async function summarizeStory(
                 { role: "system", content: "You are a helpful assistant summarizing Hacker News." },
                 { role: "user", content: prompt }
             ],
-            temperature: thinkingParams ? thinkingParams.temperature : 0.7,
-            max_tokens: MAX_TOKENS_FOR_REASONING // Ensure enough tokens for reasoning
+            temperature: thinkingParams ? thinkingParams.temperature : SUMMARY_TEMPERATURE,
+            top_p: thinkingParams ? thinkingParams.topP : SUMMARY_TOP_P,
+            max_tokens: MAX_TOKENS_SUMMARY
         };
 
-        if (thinkingParams) {
-            requestBody.top_p = thinkingParams.topP;
-            // thinkingParams.thinking is now { type: "enabled" } or false
+        if (thinkingParams?.thinking) {
             requestBody.chat_template_kwargs = { thinking: thinkingParams.thinking };
         }
 
         let content = "";
         try {
-            content = await fetchStreamCompletion(config.apiUrl, config.apiKey, requestBody);
+            if (thinkingParams?.thinking) {
+                content = await fetchStreamCompletion(config.apiUrl, config.apiKey, requestBody, {
+                    stopAfter: ["</Content Summary>", "</Discussion Summary>"]
+                });
+            } else {
+                content = await fetchCompletion(config.apiUrl, config.apiKey, requestBody);
+            }
         } catch (apiError: any) {
-            console.error(`API error for "${story.title}": ${apiError.message}`);
+            const errorMessage = getErrorMessage(apiError);
+            const providerLabel = `${config.provider ?? 'unknown'}:${config.model}`;
+            console.error(`API error for "${story.title}" (${story.objectID}) [${providerLabel}]: ${errorMessage}`);
+            const errorSnippet = truncateText(errorMessage, 120);
             return {
                 id: story.objectID,
                 title: story.title,
                 url: story.url || `https://news.ycombinator.com/item?id=${story.objectID}`,
                 points: story.points,
                 num_comments: story.num_comments,
-                summary: `API error: ${apiError.message.slice(0, 50)}`,
-                discussion_summary: `API error: ${apiError.message.slice(0, 50)}`,
+                summary: `API error: ${errorSnippet}`,
+                discussion_summary: `API error: ${errorSnippet}`,
                 postType
             };
         }
 
         // Log if content is empty (might be thinking only?)
         if (!content) {
-            console.error(`Empty response for "${story.title}"`);
+            const providerLabel = `${config.provider ?? 'unknown'}:${config.model}`;
+            console.error(`Empty response for "${story.title}" (${story.objectID}) [${providerLabel}]`);
         }
 
         const parsed = parseSummaryResponse(content);
@@ -746,7 +906,7 @@ export async function generateDigest(
     try {
         const useThinkingConfig = supportsThinkingConfig(config);
         const thinkingParams = useThinkingConfig
-            ? resolveThinkingParams(config, true)
+            ? resolveThinkingParams({ ...config, thinking: true }, true)
             : null;
 
         const requestBody: Record<string, unknown> = {
@@ -756,19 +916,25 @@ export async function generateDigest(
                 { role: "user", content: prompt }
             ],
             temperature: thinkingParams ? thinkingParams.temperature : 0.5,
-            max_tokens: MAX_TOKENS_FOR_REASONING // Ensure enough tokens for reasoning
+            max_tokens: MAX_TOKENS_DIGEST
         };
 
         if (thinkingParams) {
             requestBody.top_p = thinkingParams.topP;
-            requestBody.chat_template_kwargs = { thinking: thinkingParams.thinking };
+            if (thinkingParams.thinking) {
+                requestBody.chat_template_kwargs = { thinking: thinkingParams.thinking };
+            }
         }
 
         try {
-            const content = await fetchStreamCompletion(config.apiUrl, config.apiKey, requestBody);
+            const content = thinkingParams?.thinking
+                ? await fetchStreamCompletion(config.apiUrl, config.apiKey, requestBody)
+                : await fetchCompletion(config.apiUrl, config.apiKey, requestBody);
             return content || "Digest generation failed (empty content).";
         } catch (apiError: any) {
-            console.error(`Digest API error: ${apiError.message}`);
+            const errorMessage = getErrorMessage(apiError);
+            const providerLabel = `${config.provider ?? 'unknown'}:${config.model}`;
+            console.error(`Digest API error [${providerLabel}]: ${errorMessage}`);
             return "Digest generation failed due to API error.";
         }
 

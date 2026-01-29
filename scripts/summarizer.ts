@@ -16,25 +16,25 @@ import {
   formatArticleMarkdown,
   formatDigestMarkdown,
   getPostTypeLabel,
-  createLLMConfig
+  resolveLLMConfigWithFallback
 } from '../shared/summarizer-core';
 
 // ============================================================================
 // Configuration
 // ============================================================================
 
-// Create LLM config from environment variables
-const { config: llmConfig, provider } = createLLMConfig({
+const { config: llmConfig, provider } = await resolveLLMConfigWithFallback({
   NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  XIAOMI_API_KEY: process.env.XIAOMI_API_KEY,
+  XIAOMI_API_URL: process.env.XIAOMI_API_URL,
+  XIAOMI_MODEL: process.env.XIAOMI_MODEL,
   LLM_API_URL: process.env.LLM_API_URL,
   LLM_MODEL: process.env.LLM_MODEL,
   LLM_THINKING_FORCE: process.env.LLM_THINKING_FORCE,
   LLM_THINKING: process.env.LLM_THINKING
-});
-
-console.log(`Using ${provider} with model: ${llmConfig.model}`);
+}, console);
 
 // ============================================================================
 // CLI Arguments
