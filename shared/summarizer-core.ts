@@ -759,15 +759,24 @@ export function parseSummaryResponse(content: string): { summary: string; discus
 // ============================================================================
 
 export async function probeLLM(config: LLMConfig): Promise<{ ok: boolean; error?: string }> {
+    // Detect Nvidia NIM provider for Instant Mode health check
+    const isNvidia = config.provider === 'nvidia' ||
+                     config.apiUrl.includes('integrate.api.nvidia.com');
+
     const requestBody: Record<string, unknown> = {
         model: config.model,
         messages: [
             { role: "system", content: "You are a health check." },
             { role: "user", content: "Reply with OK." }
         ],
-        temperature: 0,
+        temperature: isNvidia ? 0.6 : 0,
         max_tokens: 32
     };
+
+    // Use Instant Mode for Nvidia NIM to avoid 524 timeout during health check
+    if (isNvidia) {
+        requestBody.chat_template_kwargs = { thinking: { type: "disabled" } };
+    }
 
     try {
         const content = await fetchCompletion(config.apiUrl, config.apiKey, requestBody);
