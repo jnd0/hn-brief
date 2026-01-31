@@ -830,7 +830,7 @@ export async function summarizeStory(
     try {
         const useThinkingConfig = supportsThinkingConfig(config);
         const thinkingParams = useThinkingConfig
-            ? resolveThinkingParams({ ...config, thinking: false }, false)
+            ? resolveThinkingParams(config, false)
             : null;
 
         const requestBody: Record<string, unknown> = {
@@ -847,7 +847,7 @@ export async function summarizeStory(
         if (thinkingParams?.thinking) {
             requestBody.chat_template_kwargs = { thinking: thinkingParams.thinking };
         }
-        applyNvidiaThinking(requestBody, config, false);
+        applyNvidiaThinking(requestBody, config, Boolean(thinkingParams?.thinking));
 
         let content = "";
         try {
