@@ -485,11 +485,16 @@ function initAudioPlayer() {
                 durationSpan.textContent = formatTime(audioPlayer.duration);
             });
 
+            let lastTimeDisplay = '';
             audioPlayer.addEventListener('timeupdate', () => {
                 if (!audioPlayer) return; // Prevent error if player reset
                 // Only update slider if user is NOT dragging it
                 if (!isDragging) {
-                    currentSpan.textContent = formatTime(audioPlayer.currentTime);
+                    const newTimeDisplay = formatTime(audioPlayer.currentTime);
+                    if (newTimeDisplay !== lastTimeDisplay) {
+                        currentSpan.textContent = newTimeDisplay;
+                        lastTimeDisplay = newTimeDisplay;
+                    }
                     if (audioPlayer.duration) {
                         slider.value = (audioPlayer.currentTime / audioPlayer.duration) * 100;
                     }
