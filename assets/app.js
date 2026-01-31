@@ -485,11 +485,16 @@ function initAudioPlayer() {
                 durationSpan.textContent = formatTime(audioPlayer.duration);
             });
 
+            let lastTimeDisplay = '';
             audioPlayer.addEventListener('timeupdate', () => {
                 if (!audioPlayer) return; // Prevent error if player reset
                 // Only update slider if user is NOT dragging it
                 if (!isDragging) {
-                    currentSpan.textContent = formatTime(audioPlayer.currentTime);
+                    const newTimeDisplay = formatTime(audioPlayer.currentTime);
+                    if (newTimeDisplay !== lastTimeDisplay) {
+                        currentSpan.textContent = newTimeDisplay;
+                        lastTimeDisplay = newTimeDisplay;
+                    }
                     if (audioPlayer.duration) {
                         slider.value = (audioPlayer.currentTime / audioPlayer.duration) * 100;
                     }
@@ -541,13 +546,6 @@ function updatePlayButton(btn, state) {
             btn.innerHTML = '<span class="play-icon">▶</span>';
             break;
     }
-}
-
-function formatTime(seconds) {
-    if (!seconds || isNaN(seconds)) return '0:00';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
 // Reset audio player when changing dates
