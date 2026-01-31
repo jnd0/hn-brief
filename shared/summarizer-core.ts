@@ -732,13 +732,20 @@ URL: ${story.url || 'N/A'}
 Post Text: ${story.text || 'N/A'}
 Comments: ${commentText}
 
-Provide concise summaries in this format:
+You MUST provide BOTH summaries in exactly this XML format:
+
 <Content Summary>
-[summary of the ${typeLabel.toLowerCase()}]
+[2-3 sentences summarizing the ${typeLabel.toLowerCase()} content]
 </Content Summary>
+
 <Discussion Summary>
-[summary of key discussion points - prefer flowing prose; only use bullet points if there are clearly distinct themes]
-</Discussion Summary>`;
+[2-4 sentences summarizing the key discussion points. Include: main themes, disagreements, technical insights, community reactions. Use flowing prose, not bullet points unless there are clearly distinct themes.]
+</Discussion Summary>
+
+CRITICAL:
+- BOTH sections are REQUIRED - never omit Discussion Summary
+- Use the exact XML tags shown above (including the forward slash in closing tags)
+- Output will be parsed programmatically using these specific tags`;
 }
 
 /**
@@ -778,6 +785,28 @@ CRITICAL STYLE RULES:
 export function parseSummaryResponse(content: string): { summary: string; discussion: string } {
     const contentMatch = content.match(/<Content Summary>([\s\S]*?)<\/Content Summary>/);
     const discussionMatch = content.match(/<Discussion Summary>([\s\S]*?)<\/Discussion Summary>/);
+
+    // If we have both tags, perfect!
+    if (contentMatch?.[1] && discussionMatch?.[1]) {
+        return {
+            summary: contentMatch[1].trim(),
+            discussion: discussionMatch[1].trim()
+        };
+    }
+
+    // FALLBACK: If we have content but no discussion tag, extract from remaining text
+    if (contentMatch?.[1] && !discussionMatch?.[1]) {
+        const contentEnd = content.indexOf('</Content Summary>') + '</Content Summary>'.length;
+        const remaining = content.slice(contentEnd).trim();
+        
+        // If there's substantial content after Content Summary, use it
+        if (remaining.length > 50) {
+            return {
+                summary: contentMatch[1].trim(),
+                discussion: remaining.replace(/<\/?[^>]+(>|$)/g, '').slice(0, 800)
+            };
+        }
+    }
 
     return {
         summary: contentMatch?.[1]?.trim() ?? "Summary unavailable.",
