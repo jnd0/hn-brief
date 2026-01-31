@@ -87,10 +87,11 @@ interface CommentSelectionOptions {
 export const ALGOLIA_API = "https://hn.algolia.com/api/v1";
 
 // LLM Provider Defaults
-const DEFAULT_NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
+// Priority: OpenRouter > Nvidia NIM > OpenAI-compatible
 const DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const DEFAULT_OPENROUTER_MODEL = "arcee-ai/trinity-large-preview:free";
+const DEFAULT_NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
 const DEFAULT_NVIDIA_MODEL = "moonshotai/kimi-k2.5";
-const DEFAULT_OPENROUTER_MODEL = "xiaomi/mimo-v2-flash:free";
 const DEFAULT_XIAOMI_URL = "https://api.xiaomimimo.com/v1/chat/completions";
 const DEFAULT_XIAOMI_MODEL = "mimo-v2-flash";
 
@@ -108,14 +109,22 @@ const SUMMARY_TOP_P = 0.95;
  * Environment variables for LLM configuration
  */
 export interface LLMEnv {
-    NVIDIA_API_KEY?: string;
+    // Primary: OpenRouter (recommended)
     OPENROUTER_API_KEY?: string;
+    OPENROUTER_MODEL?: string;
+    // Fallback: Nvidia NIM
+    NVIDIA_API_KEY?: string;
+    NVIDIA_MODEL?: string;
+    // Alternative: OpenAI-compatible
     OPENAI_API_KEY?: string;
+    // Xiaomi MiMo fallback
     XIAOMI_API_KEY?: string;
     XIAOMI_API_URL?: string;
     XIAOMI_MODEL?: string;
+    // Generic overrides (legacy, prefer provider-specific)
     LLM_API_URL?: string;
     LLM_MODEL?: string;
+    // Thinking mode control
     LLM_THINKING_FORCE?: string;
     LLM_THINKING?: string;
 }
@@ -302,32 +311,21 @@ async function fetchStreamCompletion(
 
 /**
  * Create LLM config from environment variables.
- * Priority: Nvidia NIM > OpenRouter > OpenAI (explicit URL/model required)
+ * Priority: OpenRouter > Nvidia NIM > OpenAI-compatible (legacy, requires explicit config)
  * 
  * @returns LLM config and provider name for logging
- * @throws Error if using OpenAI without explicit URL/model
+ * @throws Error if no API key is configured
  */
 export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: string } {
     const thinking = parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
-    if (env.NVIDIA_API_KEY) {
-        return {
-            config: {
-                apiKey: env.NVIDIA_API_KEY,
-                apiUrl: env.LLM_API_URL || DEFAULT_NVIDIA_URL,
-                model: env.LLM_MODEL || DEFAULT_NVIDIA_MODEL,
-                provider: 'nvidia',
-                thinking
-            },
-            provider: 'Nvidia NIM'
-        };
-    }
-
+    
+    // Priority 1: OpenRouter (recommended primary provider)
     if (env.OPENROUTER_API_KEY) {
         return {
             config: {
                 apiKey: env.OPENROUTER_API_KEY,
                 apiUrl: env.LLM_API_URL || DEFAULT_OPENROUTER_URL,
-                model: env.LLM_MODEL || DEFAULT_OPENROUTER_MODEL,
+                model: env.OPENROUTER_MODEL || env.LLM_MODEL || DEFAULT_OPENROUTER_MODEL,
                 provider: 'openrouter',
                 thinking
             },
@@ -335,8 +333,22 @@ export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: str
         };
     }
 
+    // Priority 2: Nvidia NIM (fallback)
+    if (env.NVIDIA_API_KEY) {
+        return {
+            config: {
+                apiKey: env.NVIDIA_API_KEY,
+                apiUrl: env.LLM_API_URL || DEFAULT_NVIDIA_URL,
+                model: env.NVIDIA_MODEL || env.LLM_MODEL || DEFAULT_NVIDIA_MODEL,
+                provider: 'nvidia',
+                thinking
+            },
+            provider: 'Nvidia NIM'
+        };
+    }
+
+    // Priority 3: OpenAI-compatible (requires explicit URL and model)
     if (env.OPENAI_API_KEY) {
-        // OpenAI-compatible requires explicit URL and model
         if (!env.LLM_API_URL || !env.LLM_MODEL) {
             throw new Error(
                 'When using OPENAI_API_KEY, you must also set LLM_API_URL and LLM_MODEL'
@@ -354,7 +366,7 @@ export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: str
         };
     }
 
-    throw new Error('No LLM API key found. Set NVIDIA_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.');
+    throw new Error('No LLM API key found. Set OPENROUTER_API_KEY (recommended), NVIDIA_API_KEY, or OPENAI_API_KEY.');
 }
 
 export function createXiaomiConfig(env: LLMEnv): { config: LLMConfig; provider: string } | null {

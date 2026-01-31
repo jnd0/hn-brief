@@ -24,14 +24,21 @@ import {
 // ============================================================================
 
 const { config: llmConfig, provider } = await resolveLLMConfigWithFallback({
-  NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
+  // Primary: OpenRouter
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+  OPENROUTER_MODEL: process.env.OPENROUTER_MODEL,
+  // Fallback: Nvidia NIM
+  NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
+  NVIDIA_MODEL: process.env.NVIDIA_MODEL,
+  // Alternative providers
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   XIAOMI_API_KEY: process.env.XIAOMI_API_KEY,
   XIAOMI_API_URL: process.env.XIAOMI_API_URL,
   XIAOMI_MODEL: process.env.XIAOMI_MODEL,
+  // Legacy overrides
   LLM_API_URL: process.env.LLM_API_URL,
   LLM_MODEL: process.env.LLM_MODEL,
+  // Thinking mode
   LLM_THINKING_FORCE: process.env.LLM_THINKING_FORCE,
   LLM_THINKING: process.env.LLM_THINKING
 }, console);
