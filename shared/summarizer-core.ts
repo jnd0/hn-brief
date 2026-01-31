@@ -153,13 +153,23 @@ function isNvidiaApi(config: LLMConfig): boolean {
     return config.apiUrl.includes('integrate.api.nvidia.com');
 }
 
-function supportsThinkingConfig(config: LLMConfig): boolean {
-    return isNvidiaApi(config);
+function isOpenRouterApi(config: LLMConfig): boolean {
+    if (config.provider === 'openrouter') return true;
+    return config.apiUrl.includes('openrouter.ai');
 }
 
-function applyNvidiaThinking(requestBody: Record<string, unknown>, config: LLMConfig, enabled: boolean) {
-    if (!isNvidiaApi(config)) return;
-    requestBody.thinking = enabled ? { type: "enabled" } : { type: "disabled" };
+function supportsThinkingConfig(config: LLMConfig): boolean {
+    return isNvidiaApi(config) || isOpenRouterApi(config);
+}
+
+function applyThinkingMode(requestBody: Record<string, unknown>, config: LLMConfig, enabled: boolean) {
+    if (isNvidiaApi(config)) {
+        // Nvidia NIM format
+        requestBody.thinking = enabled ? { type: "enabled" } : { type: "disabled" };
+    } else if (isOpenRouterApi(config)) {
+        // OpenRouter format (arcee-ai/trinity-large-preview:free)
+        requestBody.reasoning = { enabled };
+    }
 }
 
 function resolveThinkingParams(config: LLMConfig, defaultThinking: boolean): {
@@ -791,7 +801,7 @@ export async function probeLLM(config: LLMConfig): Promise<{ ok: boolean; error?
     };
 
     // Use Instant Mode for Nvidia NIM to avoid 524 timeout during health check
-    applyNvidiaThinking(requestBody, config, false);
+    applyThinkingMode(requestBody, config, false);
 
     try {
         const content = await fetchCompletion(config.apiUrl, config.apiKey, requestBody);
@@ -859,7 +869,7 @@ export async function summarizeStory(
         if (thinkingParams?.thinking) {
             requestBody.chat_template_kwargs = { thinking: thinkingParams.thinking };
         }
-        applyNvidiaThinking(requestBody, config, Boolean(thinkingParams?.thinking));
+        applyThinkingMode(requestBody, config, Boolean(thinkingParams?.thinking));
 
         let content = "";
         try {
@@ -952,7 +962,7 @@ export async function generateDigest(
             }
         }
 
-        applyNvidiaThinking(requestBody, config, true);
+        applyThinkingMode(requestBody, config, true);
 
         try {
             const content = thinkingParams?.thinking
