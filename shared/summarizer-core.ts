@@ -866,7 +866,10 @@ export async function summarizeStory(
             max_tokens: MAX_TOKENS_SUMMARY
         };
 
-        if (thinkingParams?.thinking) {
+        // Apply thinking mode with provider-specific format
+        // Nvidia uses 'thinking' field or chat_template_kwargs
+        // OpenRouter uses 'reasoning' field
+        if (isNvidiaApi(config) && thinkingParams?.thinking) {
             requestBody.chat_template_kwargs = { thinking: thinkingParams.thinking };
         }
         applyThinkingMode(requestBody, config, Boolean(thinkingParams?.thinking));
@@ -957,7 +960,8 @@ export async function generateDigest(
 
         if (thinkingParams) {
             requestBody.top_p = thinkingParams.topP;
-            if (thinkingParams.thinking) {
+            // Only use chat_template_kwargs for Nvidia (vLLM/SGLang format)
+            if (isNvidiaApi(config) && thinkingParams.thinking) {
                 requestBody.chat_template_kwargs = { thinking: thinkingParams.thinking };
             }
         }
