@@ -139,9 +139,18 @@ function getErrorMessage(error: unknown): string {
     return String(error);
 }
 
-function supportsThinkingConfig(config: LLMConfig): boolean {
+function isNvidiaApi(config: LLMConfig): boolean {
     if (config.provider === 'nvidia') return true;
     return config.apiUrl.includes('integrate.api.nvidia.com');
+}
+
+function supportsThinkingConfig(config: LLMConfig): boolean {
+    return isNvidiaApi(config);
+}
+
+function applyNvidiaThinking(requestBody: Record<string, unknown>, config: LLMConfig, enabled: boolean) {
+    if (!isNvidiaApi(config)) return;
+    requestBody.thinking = enabled ? { type: "enabled" } : { type: "disabled" };
 }
 
 function resolveThinkingParams(config: LLMConfig, defaultThinking: boolean): {
@@ -759,24 +768,18 @@ export function parseSummaryResponse(content: string): { summary: string; discus
 // ============================================================================
 
 export async function probeLLM(config: LLMConfig): Promise<{ ok: boolean; error?: string }> {
-    // Detect Nvidia NIM provider for Instant Mode health check
-    const isNvidia = config.provider === 'nvidia' ||
-                     config.apiUrl.includes('integrate.api.nvidia.com');
-
     const requestBody: Record<string, unknown> = {
         model: config.model,
         messages: [
             { role: "system", content: "You are a health check." },
             { role: "user", content: "Reply with OK." }
         ],
-        temperature: isNvidia ? 0.6 : 0,
+        temperature: isNvidiaApi(config) ? 0.6 : 0,
         max_tokens: 32
     };
 
     // Use Instant Mode for Nvidia NIM to avoid 524 timeout during health check
-    if (isNvidia) {
-        requestBody.chat_template_kwargs = { thinking: { type: "disabled" } };
-    }
+    applyNvidiaThinking(requestBody, config, false);
 
     try {
         const content = await fetchCompletion(config.apiUrl, config.apiKey, requestBody);
@@ -826,8 +829,9 @@ export async function summarizeStory(
 
     try {
         const useThinkingConfig = supportsThinkingConfig(config);
-        const thinkingEnabled = useThinkingConfig && config.thinking === true;
-        const thinkingParams = thinkingEnabled ? resolveThinkingParams(config, false) : null;
+        const thinkingParams = useThinkingConfig
+            ? resolveThinkingParams({ ...config, thinking: false }, false)
+            : null;
 
         const requestBody: Record<string, unknown> = {
             model: config.model,
@@ -843,6 +847,7 @@ export async function summarizeStory(
         if (thinkingParams?.thinking) {
             requestBody.chat_template_kwargs = { thinking: thinkingParams.thinking };
         }
+        applyNvidiaThinking(requestBody, config, false);
 
         let content = "";
         try {
@@ -934,6 +939,8 @@ export async function generateDigest(
                 requestBody.chat_template_kwargs = { thinking: thinkingParams.thinking };
             }
         }
+
+        applyNvidiaThinking(requestBody, config, true);
 
         try {
             const content = thinkingParams?.thinking
