@@ -31,8 +31,8 @@ export interface LLMConfig {
 }
 
 export interface LLMLogger {
-    info: (message: string) => void;
-    error: (message: string) => void;
+    info: (...args: any[]) => void;
+    error: (...args: any[]) => void;
 }
 
 export interface AlgoliaHit {
@@ -274,8 +274,8 @@ async function fetchStreamCompletion(
     url: string,
     apiKey: string,
     body: Record<string, unknown>,
-    options?: { stopAfter?: string[] },
-    fetcher?: FetchLike
+    fetcher?: FetchLike,
+    options?: { stopAfter?: string[] }
 ): Promise<string> {
     const _fetch = fetcher || fetch;
     const response = await _fetch(url, {
@@ -1012,9 +1012,9 @@ export async function summarizeStory(
         let content = "";
         try {
             if (thinkingParams?.thinking) {
-                content = await fetchStreamCompletion(config.apiUrl, config.apiKey, requestBody, {
+                content = await fetchStreamCompletion(config.apiUrl, config.apiKey, requestBody, fetcher, {
                     stopAfter: ["</Content Summary>", "</Discussion Summary>"]
-                }, fetcher);
+                });
             } else {
                 content = await fetchCompletion(config.apiUrl, config.apiKey, requestBody, fetcher);
             }
@@ -1054,7 +1054,7 @@ export async function summarizeStory(
             postType
         };
     } catch (e) {
-        logError(`Failed to summarize: ${story.title} ${e}`);
+        logError(`Failed to summarize: ${story.title}`, e);
         return {
             id: story.objectID,
             title: story.title,
@@ -1164,7 +1164,7 @@ export async function generateDigest(
 
         try {
             const content = thinkingParams?.thinking
-                ? await fetchStreamCompletion(config.apiUrl, config.apiKey, requestBody, undefined, fetcher)
+                ? await fetchStreamCompletion(config.apiUrl, config.apiKey, requestBody, fetcher)
                 : await fetchCompletion(config.apiUrl, config.apiKey, requestBody, fetcher);
             return content || "Digest generation failed (empty content).";
         } catch (apiError: any) {
