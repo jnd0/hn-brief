@@ -29,12 +29,15 @@ function parseArticleMarkdown(md) {
     const stories = [];
     let story = null;
 
-    // Helper: append text to the current active section (discussion first, then summary)
+    // Helper: append text to the current active section
+    // Checks discussion !== undefined to properly handle empty discussion sections
     const appendTo = (text, separator = '\n') => {
         if (!story) return;
-        if (story.discussion) {
+        if (story.discussion !== undefined) {
+            // Discussion section has been initialized (even if empty)
             story.discussion += separator + text;
-        } else if (story.summary) {
+        } else {
+            // Still in summary section (story.summary always exists)
             story.summary += separator + text;
         }
     };
@@ -57,7 +60,7 @@ function parseArticleMarkdown(md) {
                 hnId: null,
                 summary: '',
                 summaryLabel: 'Article',
-                discussion: ''
+                discussion: undefined
             };
             continue;
         }
@@ -125,12 +128,14 @@ function renderStories(stories) {
             </div>
             <div class="summary-row">
                 <div class="summary-content">
-                <div class="summary-block">
+                    <div class="summary-block">
                         <span class="summary-label">${story.summaryLabel}:</span> ${marked.parse(story.summary)}
                     </div>
+                    ${story.discussion?.trim() ? `
                     <div class="summary-block">
                         <span class="summary-label">Discussion:</span> ${marked.parse(story.discussion)}
                     </div>
+                    ` : ''}
                 </div>
             </div>
         `;
