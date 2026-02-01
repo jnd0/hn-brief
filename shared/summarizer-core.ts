@@ -784,7 +784,7 @@ You MUST provide BOTH summaries in exactly this XML format:
 </Content Summary>
 
 <Discussion Summary>
-[2-4 sentences summarizing the key discussion points. Include: main themes, disagreements, technical insights, community reactions. Use flowing prose, not bullet points unless there are clearly distinct themes.]
+[2-4 sentences summarizing the key discussion points. Include: main themes, disagreements, technical insights, community reactions. Use flowing prose, not bullet points unless there are clearly distinct themes. DO NOT start with "The Hacker News discussion" or similar robotic phrases. Jump straight into the substance: what people debated, what insights emerged, where they disagreed. Write like a journalist, not a robot.]
 </Discussion Summary>
 
 CRITICAL:
