@@ -104,7 +104,7 @@ async function generateDailySummary(env: Env) {
     // Process sequentially with delays between stories
     const BATCH_SIZE = 3;
     const STORY_DELAY_MS = 2000; // 2 seconds between stories
-    const BATCH_DELAY_MS = 5000; // 5 seconds between batches
+    const BATCH_DELAY_MS = 10000; // 10 seconds between batches
     const processedStories: ProcessedStory[] = [];
 
     for (let i = 0; i < storyDetails.length; i += BATCH_SIZE) {
@@ -134,8 +134,8 @@ async function generateDailySummary(env: Env) {
     const articleMd = formatArticleMarkdown(processedStories, date);
     
     // Wait before generating digest to avoid rate limits
-    console.log(`⏳ Waiting 5s before generating digest...`);
-    await new Promise(r => setTimeout(r, 5000));
+    console.log(`⏳ Waiting 10s before generating digest...`);
+    await new Promise(r => setTimeout(r, 10000));
     
     const digestContent = await generateDigest(processedStories, llmConfig);
     const digestMd = formatDigestMarkdown(digestContent, date, processedStories.length);

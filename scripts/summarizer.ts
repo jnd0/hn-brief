@@ -177,7 +177,7 @@ async function processDate(date: string, mode: string): Promise<{ date: string; 
   // Add small delay between stories + batch delays
   const BATCH_SIZE = 3;
   const STORY_DELAY_MS = 2000; // 2 seconds between each story
-  const BATCH_DELAY_MS = 5000; // 5 seconds between batches
+  const BATCH_DELAY_MS = 10000; // 10 seconds between batches
   const processedStories: ProcessedStory[] = [];
 
   for (let i = 0; i < storyDetails.length; i += BATCH_SIZE) {
@@ -214,8 +214,8 @@ async function processDate(date: string, mode: string): Promise<{ date: string; 
 
   // Wait before generating digest to avoid rate limits
   if ((mode === 'all' || mode === 'digest') && processedStories.length > 0) {
-    console.log(`   ⏳ Waiting 5s before generating digest...`);
-    await new Promise(r => setTimeout(r, 5000));
+    console.log(`   ⏳ Waiting 10s before generating digest...`);
+    await new Promise(r => setTimeout(r, 10000));
     
     // Generate Digest Mode
     const digestContent = await generateDigest(processedStories, llmConfig);
