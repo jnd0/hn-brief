@@ -62,7 +62,7 @@ export interface Comment {
 }
 
 /** Metadata computed for each comment during tree analysis */
-interface CommentMetadata {
+export interface CommentMetadata {
     comment: Comment;
     depth: number;
     descendantCount: number;
@@ -75,10 +75,12 @@ interface CommentMetadata {
 }
 
 /** Options for comment selection algorithm */
-interface CommentSelectionOptions {
+export interface CommentSelectionOptions {
     maxChars: number;    // Budget on formatted output
     perRootCap: number;  // Max comments from same top-level thread
 }
+
+export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 // ============================================================================
 // Constants
@@ -230,9 +232,11 @@ async function buildApiError(response: Response): Promise<Error> {
 async function fetchCompletion(
     url: string,
     apiKey: string,
-    body: Record<string, unknown>
+    body: Record<string, unknown>,
+    fetcher?: FetchLike
 ): Promise<string> {
-    const response = await fetch(url, {
+    const _fetch = fetcher || fetch;
+    const response = await _fetch(url, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -270,9 +274,11 @@ async function fetchStreamCompletion(
     url: string,
     apiKey: string,
     body: Record<string, unknown>,
-    options?: { stopAfter?: string[] }
+    options?: { stopAfter?: string[] },
+    fetcher?: FetchLike
 ): Promise<string> {
-    const response = await fetch(url, {
+    const _fetch = fetcher || fetch;
+    const response = await _fetch(url, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -477,7 +483,7 @@ function shouldSkipComment(comment: Comment): boolean {
 /**
  * Compute quality score for a comment based on structural signals
  */
-function scoreComment(meta: CommentMetadata): number {
+export function scoreComment(meta: CommentMetadata): number {
     const descendantScore = 2.0 * Math.log(1 + meta.descendantCount);
     const textScore = 1.0 * Math.log(1 + meta.textLength / 100);
     const replyScore = 0.8 * meta.directReplyCount;
@@ -612,7 +618,7 @@ function formatComment(
  * Select and format best comments using scoring algorithm
  * Returns formatted text respecting character budget
  */
-function selectAndFormatComments(
+export function selectAndFormatComments(
     comments: Comment[],
     options: CommentSelectionOptions
 ): string {
@@ -714,7 +720,8 @@ export function getPostTypeLabel(type: PostType): string {
  * Fetch top stories from HN Algolia API
  * @param date Optional date string (YYYY-MM-DD) to fetch historical stories
  */
-export async function fetchTopStories(date?: string): Promise<AlgoliaHit[]> {
+export async function fetchTopStories(date?: string, fetcher?: FetchLike): Promise<AlgoliaHit[]> {
+    const _fetch = fetcher || fetch;
     if (date) {
         // For specific date, search for top stories from that day
         const startTimestamp = Math.floor(new Date(date + 'T00:00:00Z').getTime() / 1000);
@@ -722,7 +729,7 @@ export async function fetchTopStories(date?: string): Promise<AlgoliaHit[]> {
 
         const numericFilters = `created_at_i>=${startTimestamp},created_at_i<${endTimestamp},points>10`;
         const url = `${ALGOLIA_API}/search?tags=story&numericFilters=${encodeURIComponent(numericFilters)}&hitsPerPage=50`;
-        const res = await fetch(url);
+        const res = await _fetch(url);
         const data = await res.json() as { hits?: AlgoliaHit[] };
 
         // Sort by points descending and take top 20
@@ -736,7 +743,7 @@ export async function fetchTopStories(date?: string): Promise<AlgoliaHit[]> {
 
     const numericFilters = `created_at_i>${yesterday},points>10`;
     const url = `${ALGOLIA_API}/search?tags=story&numericFilters=${encodeURIComponent(numericFilters)}&hitsPerPage=50`;
-    const res = await fetch(url);
+    const res = await _fetch(url);
     const data = await res.json() as { hits?: AlgoliaHit[] };
     const hits = data.hits || [];
     return hits.sort((a, b) => (b.points || 0) - (a.points || 0)).slice(0, 20);
@@ -745,8 +752,9 @@ export async function fetchTopStories(date?: string): Promise<AlgoliaHit[]> {
 /**
  * Fetch detailed story info including comments
  */
-export async function fetchStoryDetails(storyId: string): Promise<StoryDetails> {
-    const res = await fetch(`${ALGOLIA_API}/items/${storyId}`);
+export async function fetchStoryDetails(storyId: string, fetcher?: FetchLike): Promise<StoryDetails> {
+    const _fetch = fetcher || fetch;
+    const res = await _fetch(`${ALGOLIA_API}/items/${storyId}`);
     return await res.json() as StoryDetails;
 }
 
@@ -865,7 +873,7 @@ export function parseSummaryResponse(content: string): { summary: string; discus
 // LLM API Calls
 // ============================================================================
 
-export async function probeLLM(config: LLMConfig): Promise<{ ok: boolean; error?: string }> {
+export async function probeLLM(config: LLMConfig, fetcher?: FetchLike): Promise<{ ok: boolean; error?: string }> {
     const requestBody: Record<string, unknown> = {
         model: config.model,
         messages: [
@@ -880,7 +888,7 @@ export async function probeLLM(config: LLMConfig): Promise<{ ok: boolean; error?
     applyThinkingMode(requestBody, config, false);
 
     try {
-        const content = await fetchCompletion(config.apiUrl, config.apiKey, requestBody);
+        const content = await fetchCompletion(config.apiUrl, config.apiKey, requestBody, fetcher);
         if (!content || !content.trim()) {
             return { ok: false, error: 'empty response' };
         }
@@ -892,7 +900,8 @@ export async function probeLLM(config: LLMConfig): Promise<{ ok: boolean; error?
 
 export async function resolveLLMConfigWithFallback(
     env: LLMEnv,
-    logger: LLMLogger = { info: () => {}, error: () => {} }
+    logger: LLMLogger = { info: () => {}, error: () => {} },
+    fetcher?: FetchLike
 ): Promise<{ config: LLMConfig; provider: string; usedFallback: boolean }>{
     // Try providers in order: Cebras -> Nvidia -> Xiaomi -> OpenRouter
     const providers: { config: LLMConfig; provider: string }[] = [];
@@ -931,7 +940,7 @@ export async function resolveLLMConfigWithFallback(
         // Run health check for Cebras and Nvidia
         if (current.provider === 'Cebras' || current.provider === 'Nvidia NIM') {
             logger.info(`Running ${current.provider} health check...`);
-            const probe = await probeLLM(current.config);
+            const probe = await probeLLM(current.config, fetcher);
             if (!probe.ok) {
                 const detail = probe.error ? ` (${probe.error})` : '';
                 logger.error(`${current.provider} health check failed${detail}.`);
@@ -967,10 +976,13 @@ export async function resolveLLMConfigWithFallback(
 export async function summarizeStory(
     story: AlgoliaHit,
     comments: Comment[],
-    config: LLMConfig
+    config: LLMConfig,
+    fetcher?: FetchLike,
+    logger?: LLMLogger
 ): Promise<ProcessedStory> {
     const postType = detectPostType(story.title);
     const prompt = buildSummaryPrompt(story, comments);
+    const logError = logger?.error || console.error;
 
     try {
         const useThinkingConfig = supportsThinkingConfig(config);
@@ -1002,14 +1014,14 @@ export async function summarizeStory(
             if (thinkingParams?.thinking) {
                 content = await fetchStreamCompletion(config.apiUrl, config.apiKey, requestBody, {
                     stopAfter: ["</Content Summary>", "</Discussion Summary>"]
-                });
+                }, fetcher);
             } else {
-                content = await fetchCompletion(config.apiUrl, config.apiKey, requestBody);
+                content = await fetchCompletion(config.apiUrl, config.apiKey, requestBody, fetcher);
             }
         } catch (apiError: any) {
             const errorMessage = getErrorMessage(apiError);
             const providerLabel = `${config.provider ?? 'unknown'}:${config.model}`;
-            console.error(`API error for "${story.title}" (${story.objectID}) [${providerLabel}]: ${errorMessage}`);
+            logError(`API error for "${story.title}" (${story.objectID}) [${providerLabel}]: ${errorMessage}`);
             const errorSnippet = truncateText(errorMessage, 120);
             return {
                 id: story.objectID,
@@ -1026,7 +1038,7 @@ export async function summarizeStory(
         // Log if content is empty (might be thinking only?)
         if (!content) {
             const providerLabel = `${config.provider ?? 'unknown'}:${config.model}`;
-            console.error(`Empty response for "${story.title}" (${story.objectID}) [${providerLabel}]`);
+            logError(`Empty response for "${story.title}" (${story.objectID}) [${providerLabel}]`);
         }
 
         const parsed = parseSummaryResponse(content);
@@ -1042,7 +1054,7 @@ export async function summarizeStory(
             postType
         };
     } catch (e) {
-        console.error(`Failed to summarize: ${story.title}`, e);
+        logError(`Failed to summarize: ${story.title} ${e}`);
         return {
             id: story.objectID,
             title: story.title,
@@ -1069,14 +1081,20 @@ export async function processStoriesWithRateLimit(
         storyDelayMs?: number;
         batchDelayMs?: number;
         indent?: string;
+        fetcher?: FetchLike;
+        logger?: LLMLogger;
     }
 ): Promise<ProcessedStory[]> {
     const {
         batchSize = 3,
         storyDelayMs = 2000,
         batchDelayMs = 10000,
-        indent = ''
+        indent = '',
+        fetcher,
+        logger
     } = options || {};
+
+    const logInfo = logger?.info || console.log;
     
     const processedStories: ProcessedStory[] = [];
     const totalBatches = Math.ceil(storyDetails.length / batchSize);
@@ -1084,11 +1102,11 @@ export async function processStoriesWithRateLimit(
     for (let i = 0; i < storyDetails.length; i += batchSize) {
         const batch = storyDetails.slice(i, i + batchSize);
         const batchNum = Math.floor(i / batchSize) + 1;
-        console.log(`${indent}Processing batch ${batchNum}/${totalBatches} (${batch.length} stories)...`);
+        logInfo(`${indent}Processing batch ${batchNum}/${totalBatches} (${batch.length} stories)...`);
         
         // Process sequentially with delay between each
         for (const { hit, details } of batch) {
-            const summary = await summarizeStory(hit, details.children || [], llmConfig);
+            const summary = await summarizeStory(hit, details.children || [], llmConfig, fetcher, logger);
             processedStories.push(summary);
             
             // Small delay between stories to avoid overwhelming API
@@ -1099,12 +1117,12 @@ export async function processStoriesWithRateLimit(
         
         // Delay between batches
         if (i + batchSize < storyDetails.length) {
-            console.log(`${indent}⏳ Waiting ${batchDelayMs/1000}s before next batch...`);
+            logInfo(`${indent}⏳ Waiting ${batchDelayMs/1000}s before next batch...`);
             await new Promise(r => setTimeout(r, batchDelayMs));
         }
     }
     
-    console.log(`${indent}✅ Summarized ${processedStories.length} stories`);
+    logInfo(`${indent}✅ Summarized ${processedStories.length} stories`);
     return processedStories;
 }
 
@@ -1113,7 +1131,8 @@ export async function processStoriesWithRateLimit(
  */
 export async function generateDigest(
     stories: ProcessedStory[],
-    config: LLMConfig
+    config: LLMConfig,
+    fetcher?: FetchLike
 ): Promise<string> {
     const prompt = buildDigestPrompt(stories);
 
@@ -1145,8 +1164,8 @@ export async function generateDigest(
 
         try {
             const content = thinkingParams?.thinking
-                ? await fetchStreamCompletion(config.apiUrl, config.apiKey, requestBody)
-                : await fetchCompletion(config.apiUrl, config.apiKey, requestBody);
+                ? await fetchStreamCompletion(config.apiUrl, config.apiKey, requestBody, undefined, fetcher)
+                : await fetchCompletion(config.apiUrl, config.apiKey, requestBody, fetcher);
             return content || "Digest generation failed (empty content).";
         } catch (apiError: any) {
             const errorMessage = getErrorMessage(apiError);
