@@ -99,27 +99,32 @@ async function generateDailySummary(env: Env) {
     );
     console.log(`Fetched all story details.`);
 
-    // 3. Process LLM calls in SMALL BATCHES to respect 40 rpm limit
-    // 40 rpm = batch of 5 every 7.5 seconds is safe
-    const BATCH_SIZE = 5;
-    const BATCH_DELAY_MS = 8000; // 8 seconds between batches
+    // 3. Process LLM calls with rate limiting for Cebras
+    // Cebras is fast but has tokens-per-minute limits
+    // Process sequentially with delays between stories
+    const BATCH_SIZE = 3;
+    const STORY_DELAY_MS = 2000; // 2 seconds between stories
+    const BATCH_DELAY_MS = 5000; // 5 seconds between batches
     const processedStories: ProcessedStory[] = [];
 
     for (let i = 0; i < storyDetails.length; i += BATCH_SIZE) {
         const batch = storyDetails.slice(i, i + BATCH_SIZE);
         console.log(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(storyDetails.length / BATCH_SIZE)} (${batch.length} stories)...`);
 
-        const batchResults = await Promise.all(
-            batch.map(async ({ hit, details }: { hit: AlgoliaHit; details: any }) => {
-                const summary = await summarizeStory(hit, details.children || [], llmConfig);
-                return summary;
-            })
-        );
+        // Process sequentially with delay between each
+        for (const { hit, details } of batch) {
+            const summary = await summarizeStory(hit, details.children || [], llmConfig);
+            processedStories.push(summary);
+            
+            // Small delay between stories
+            if (processedStories.length < storyDetails.length) {
+                await new Promise(r => setTimeout(r, STORY_DELAY_MS));
+            }
+        }
 
-        processedStories.push(...batchResults);
-
-        // Delay between batches to respect 40 rpm limit
+        // Delay between batches
         if (i + BATCH_SIZE < storyDetails.length) {
+            console.log(`⏳ Waiting ${BATCH_DELAY_MS/1000}s before next batch...`);
             await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
         }
     }
@@ -127,6 +132,11 @@ async function generateDailySummary(env: Env) {
 
     // 4. Generate Markdown using shared formatters
     const articleMd = formatArticleMarkdown(processedStories, date);
+    
+    // Wait before generating digest to avoid rate limits
+    console.log(`⏳ Waiting 5s before generating digest...`);
+    await new Promise(r => setTimeout(r, 5000));
+    
     const digestContent = await generateDigest(processedStories, llmConfig);
     const digestMd = formatDigestMarkdown(digestContent, date, processedStories.length);
 
