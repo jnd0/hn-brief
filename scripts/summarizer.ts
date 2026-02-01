@@ -16,6 +16,7 @@ import {
   formatArticleMarkdown,
   formatDigestMarkdown,
   getPostTypeLabel,
+  getLondonDate,
   resolveLLMConfigWithFallback
 } from '../shared/summarizer-core';
 
@@ -143,17 +144,23 @@ function getDatesInYear(year: string): string[] {
 // Processing Functions
 // ============================================================================
 
-async function processDate(date: string, mode: string): Promise<{ date: string; storyCount: number }> {
-  const [year, month, day] = date.split('-');
+async function processDate(date: string | null, mode: string): Promise<{ date: string; storyCount: number }> {
+  // Use London date for file naming when in "live" mode (last 24 hours)
+  const fileDate = date || getLondonDate();
+  const [year, month, day] = fileDate.split('-');
   const folderPath = `summaries/${year}/${month}`;
 
-  console.log(`\n📅 Processing: ${date}`);
+  if (date) {
+    console.log(`\n📅 Processing: ${date}`);
+  } else {
+    console.log(`\n📅 Processing: Last 24 hours (saving to ${fileDate})`);
+  }
 
-  // Fetch and process stories
-  const stories = await fetchTopStories(date);
+  // Fetch and process stories (null date = last 24 hours like the worker)
+  const stories = await fetchTopStories(date || undefined);
   if (stories.length === 0) {
-    console.log(`   ⚠️ No stories found for ${date}, skipping...`);
-    return { date, storyCount: 0 };
+    console.log(`   ⚠️ No stories found for ${fileDate}, skipping...`);
+    return { date: fileDate, storyCount: 0 };
   }
 
   console.log(`   Found ${stories.length} stories, fetching details in parallel...`);
@@ -207,7 +214,7 @@ async function processDate(date: string, mode: string): Promise<{ date: string; 
 
   // Generate Article Mode Markdown
   if (mode === 'all' || mode === 'articles') {
-    const articleMd = formatArticleMarkdown(processedStories, date);
+    const articleMd = formatArticleMarkdown(processedStories, fileDate);
     await Bun.write(`${folderPath}/${day}.md`, articleMd);
     console.log(`   ✅ Saved articles`);
   }
@@ -219,12 +226,12 @@ async function processDate(date: string, mode: string): Promise<{ date: string; 
     
     // Generate Digest Mode
     const digestContent = await generateDigest(processedStories, llmConfig);
-    const digestMd = formatDigestMarkdown(digestContent, date, processedStories.length);
+    const digestMd = formatDigestMarkdown(digestContent, fileDate, processedStories.length);
     await Bun.write(`${folderPath}/${day}-digest.md`, digestMd);
     console.log(`   ✅ Saved digest`);
   }
 
-  return { date, storyCount: processedStories.length };
+  return { date: fileDate, storyCount: processedStories.length };
 }
 
 // ============================================================================
@@ -321,7 +328,8 @@ async function main() {
   }
 
   // Determine dates to process
-  let datesToProcess: string[] = [];
+  let datesToProcess: (string | null)[] = [];
+  let isLiveMode = false;
 
   if (options.year) {
     console.log(`\n🗓️ Batch mode: Processing year ${options.year}`);
@@ -329,12 +337,17 @@ async function main() {
   } else if (options.month) {
     console.log(`\n🗓️ Batch mode: Processing month ${options.month}`);
     datesToProcess = getDatesInMonth(options.month);
+  } else if (options.date) {
+    // Specific date mode
+    datesToProcess = [options.date];
   } else {
-    datesToProcess = [options.date || new Date().toISOString().split('T')[0] || ''];
+    // Live mode - last 24 hours (like the worker)
+    isLiveMode = true;
+    datesToProcess = [null];
   }
 
   console.log(`📊 Will process ${datesToProcess.length} date(s)`);
-  console.log(`🎯 Mode: ${options.mode}`);
+  console.log(`🎯 Mode: ${options.mode}${isLiveMode ? ' (live - last 24h)' : ''}`);
 
   // Process each date
   const results: { date: string; storyCount: number }[] = [];
