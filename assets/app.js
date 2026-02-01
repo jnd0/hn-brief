@@ -36,8 +36,8 @@ function parseArticleMarkdown(md) {
         if (story.discussion !== undefined) {
             // Discussion section has been initialized (even if empty)
             story.discussion += separator + text;
-        } else if (story.summary) {
-            // Still in summary section
+        } else {
+            // Still in summary section (story.summary always exists)
             story.summary += separator + text;
         }
     };
