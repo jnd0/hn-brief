@@ -114,13 +114,18 @@ async function generateDailySummary(env: Env) {
 
     // 5. Commit both files to GitHub
     const folderPath = `summaries/${year}/${month}`;
-    await commitToGitHub(env, `${folderPath}/${day}.md`, articleMd, `Add articles for ${date}`);
-    await commitToGitHub(env, `${folderPath}/${day}-digest.md`, digestMd, `Add digest for ${date}`);
+    try {
+        await commitToGitHub(env, `${folderPath}/${day}.md`, articleMd, `Add articles for ${date}`);
+        await commitToGitHub(env, `${folderPath}/${day}-digest.md`, digestMd, `Add digest for ${date}`);
 
-    // 6. Update Archive Index
-    await updateArchive(env, date, processedStories.length);
+        // 6. Update Archive Index
+        await updateArchive(env, date, processedStories.length);
 
-    console.log(`✅ Completed summary for ${date}`);
+        console.log(`✅ Completed summary for ${date}`);
+    } catch (error) {
+        console.error(`❌ Failed to commit files for ${date}:`, error);
+        throw error; // Re-throw to ensure Worker reports failure
+    }
 }
 
 // ============================================================================
@@ -146,21 +151,33 @@ function utf8_to_b64(str: string): string {
     );
 }
 
-async function commitToGitHub(env: Env, path: string, content: string, message: string, shaOverride?: string) {
+async function commitToGitHub(env: Env, path: string, content: string, message: string, shaOverride?: string): Promise<{ action: 'created' | 'updated' | 'unchanged'; sha?: string }> {
     const url = `https://api.github.com/repos/${env.REPO_OWNER}/${env.REPO_NAME}/contents/${path}`;
 
-    // Get SHA if file exists and not provided
-    let sha = shaOverride;
-    if (!sha) {
+    // Get existing file info if it exists
+    let existingSha: string | undefined = shaOverride;
+    let existingContent: string | undefined;
+    
+    if (!existingSha) {
         try {
             const check = await fetch(url, {
                 headers: { "User-Agent": "HN-Brief-Worker", "Authorization": `token ${env.GITHUB_TOKEN}` }
             });
             if (check.ok) {
                 const data: any = await check.json();
-                sha = data.sha;
+                existingSha = data.sha;
+                existingContent = atob(data.content);
             }
-        } catch { }
+        } catch (e) {
+            // File doesn't exist - that's fine, we'll create it
+            console.log(`File ${path} does not exist, will create`);
+        }
+    }
+
+    // Skip if content is identical (avoid empty commits)
+    if (existingContent !== undefined && existingContent === content) {
+        console.log(`⏭️ Skipping ${path} - content unchanged`);
+        return { action: 'unchanged' };
     }
 
     const res = await fetch(url, {
@@ -170,12 +187,20 @@ async function commitToGitHub(env: Env, path: string, content: string, message: 
             "Authorization": `token ${env.GITHUB_TOKEN}`,
             "Content-Type": "application/json"
         },
-        body: JSON.stringify({ message, content: utf8_to_b64(content), sha })
+        body: JSON.stringify({ message, content: utf8_to_b64(content), sha: existingSha })
     });
 
     if (!res.ok) {
-        console.error(`GitHub commit failed for ${path}:`, await res.text());
+        const errorText = await res.text();
+        console.error(`GitHub commit failed for ${path}:`, errorText);
+        throw new Error(`GitHub commit failed for ${path}: ${res.status} ${res.statusText} - ${errorText}`);
     }
+
+    const result: any = await res.json();
+    const action = existingSha ? 'updated' : 'created';
+    console.log(`✅ ${action === 'created' ? 'Created' : 'Updated'} ${path} (commit: ${result.commit?.sha?.slice(0, 7)})`);
+    
+    return { action, sha: result.content?.sha };
 }
 
 async function updateArchive(env: Env, date: string, storyCount: number) {
@@ -188,7 +213,8 @@ async function updateArchive(env: Env, date: string, storyCount: number) {
         archive = JSON.parse(content);
         currentSha = sha;
     } catch {
-        // File doesn't exist yet
+        // File doesn't exist yet - will be created
+        console.log(`Archive file doesn't exist, will create new one`);
     }
 
     // Normalize and add/update entry
