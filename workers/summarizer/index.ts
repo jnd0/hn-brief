@@ -79,7 +79,9 @@ async function generateDailySummary(env: Env) {
         provider = result.provider;
     } catch (e) {
         console.error(`Failed to create LLM config: ${e}`);
-        console.error(`Available env keys: NVIDIA_API_KEY=${!!env.NVIDIA_API_KEY}, OPENROUTER_API_KEY=${!!env.OPENROUTER_API_KEY}, OPENAI_API_KEY=${!!env.OPENAI_API_KEY}`);
+        console.error(
+            `Available env keys: CEBRAS_API_KEY=${!!env.CEBRAS_API_KEY}, NVIDIA_API_KEY=${!!env.NVIDIA_API_KEY}, XIAOMI_API_KEY=${!!env.XIAOMI_API_KEY}, OPENROUTER_API_KEY=${!!env.OPENROUTER_API_KEY}, OPENAI_API_KEY=${!!env.OPENAI_API_KEY}`
+        );
         throw e;
     }
 

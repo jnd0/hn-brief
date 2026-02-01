@@ -26,7 +26,7 @@ export interface LLMConfig {
     apiKey: string;
     apiUrl: string;
     model: string;
-    provider?: 'nvidia' | 'openrouter' | 'openai-compatible' | 'xiaomi';
+    provider?: 'cebras' | 'nvidia' | 'openrouter' | 'openai-compatible' | 'xiaomi';
     thinking?: boolean;
 }
 
@@ -87,7 +87,9 @@ interface CommentSelectionOptions {
 export const ALGOLIA_API = "https://hn.algolia.com/api/v1";
 
 // LLM Provider Defaults
-// Priority: OpenRouter > Nvidia NIM > OpenAI-compatible
+// Priority: Cebras > Nvidia NIM > Xiaomi MiMo > OpenRouter > OpenAI-compatible
+const DEFAULT_CEBRAS_URL = "https://api.cerebras.ai/v1/chat/completions";
+const DEFAULT_CEBRAS_MODEL = "qwen-3-235b-a22b-instruct-2507";
 const DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_OPENROUTER_MODEL = "arcee-ai/trinity-large-preview:free";
 const DEFAULT_NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
@@ -109,18 +111,22 @@ const SUMMARY_TOP_P = 0.95;
  * Environment variables for LLM configuration
  */
 export interface LLMEnv {
-    // Primary: OpenRouter (recommended)
-    OPENROUTER_API_KEY?: string;
-    OPENROUTER_MODEL?: string;
+    // Primary: Cebras
+    CEBRAS_API_KEY?: string;
+    CEBRAS_API_URL?: string;
+    CEBRAS_API_MODEL?: string;
     // Fallback: Nvidia NIM
     NVIDIA_API_KEY?: string;
     NVIDIA_MODEL?: string;
-    // Alternative: OpenAI-compatible
-    OPENAI_API_KEY?: string;
-    // Xiaomi MiMo fallback
+    // Fallback: Xiaomi MiMo
     XIAOMI_API_KEY?: string;
     XIAOMI_API_URL?: string;
     XIAOMI_MODEL?: string;
+    // Last resort: OpenRouter
+    OPENROUTER_API_KEY?: string;
+    OPENROUTER_MODEL?: string;
+    // Alternative: OpenAI-compatible
+    OPENAI_API_KEY?: string;
     // Generic overrides (legacy, prefer provider-specific)
     LLM_API_URL?: string;
     LLM_MODEL?: string;
@@ -158,6 +164,11 @@ function isOpenRouterApi(config: LLMConfig): boolean {
     return config.apiUrl.includes('openrouter.ai');
 }
 
+function isCebrasApi(config: LLMConfig): boolean {
+    if (config.provider === 'cebras') return true;
+    return config.apiUrl.includes('cerebras.ai');
+}
+
 function supportsThinkingConfig(config: LLMConfig): boolean {
     return isNvidiaApi(config) || isOpenRouterApi(config);
 }
@@ -170,6 +181,14 @@ function applyThinkingMode(requestBody: Record<string, unknown>, config: LLMConf
         // OpenRouter format (arcee-ai/trinity-large-preview:free)
         requestBody.reasoning = { enabled };
     }
+}
+
+function applyMaxTokens(requestBody: Record<string, unknown>, config: LLMConfig, maxTokens: number) {
+    if (isCebrasApi(config)) {
+        requestBody.max_completion_tokens = maxTokens;
+        return;
+    }
+    requestBody.max_tokens = maxTokens;
 }
 
 function resolveThinkingParams(config: LLMConfig, defaultThinking: boolean): {
@@ -217,6 +236,7 @@ async function fetchCompletion(
         method: "POST",
         headers: {
             "Content-Type": "application/json",
+            "User-Agent": "HN-Brief",
             "Authorization": `Bearer ${apiKey}`
         },
         body: JSON.stringify(body)
@@ -254,6 +274,7 @@ async function fetchStreamCompletion(
         method: "POST",
         headers: {
             "Content-Type": "application/json",
+            "User-Agent": "HN-Brief",
             "Authorization": `Bearer ${apiKey}`
         },
         body: JSON.stringify({ ...body, stream: true })
@@ -321,7 +342,7 @@ async function fetchStreamCompletion(
 
 /**
  * Create LLM config from environment variables.
- * Priority: OpenRouter > Nvidia NIM > OpenAI-compatible (legacy, requires explicit config)
+ * Priority: Cebras > Nvidia NIM > Xiaomi MiMo > OpenRouter > OpenAI-compatible (legacy, requires explicit config)
  * 
  * @returns LLM config and provider name for logging
  * @throws Error if no API key is configured
@@ -329,17 +350,17 @@ async function fetchStreamCompletion(
 export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: string } {
     const thinking = parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
     
-    // Priority 1: OpenRouter (recommended primary provider)
-    if (env.OPENROUTER_API_KEY) {
+    // Priority 1: Cebras (primary provider)
+    if (env.CEBRAS_API_KEY) {
         return {
             config: {
-                apiKey: env.OPENROUTER_API_KEY,
-                apiUrl: env.LLM_API_URL || DEFAULT_OPENROUTER_URL,
-                model: env.OPENROUTER_MODEL || env.LLM_MODEL || DEFAULT_OPENROUTER_MODEL,
-                provider: 'openrouter',
+                apiKey: env.CEBRAS_API_KEY,
+                apiUrl: env.CEBRAS_API_URL || DEFAULT_CEBRAS_URL,
+                model: env.CEBRAS_API_MODEL || DEFAULT_CEBRAS_MODEL,
+                provider: 'cebras',
                 thinking
             },
-            provider: 'OpenRouter'
+            provider: 'Cebras'
         };
     }
 
@@ -357,7 +378,27 @@ export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: str
         };
     }
 
-    // Priority 3: OpenAI-compatible (requires explicit URL and model)
+    // Priority 3: Xiaomi MiMo (fallback)
+    const xiaomi = createXiaomiConfig(env);
+    if (xiaomi) {
+        return xiaomi;
+    }
+
+    // Priority 4: OpenRouter (last resort)
+    if (env.OPENROUTER_API_KEY) {
+        return {
+            config: {
+                apiKey: env.OPENROUTER_API_KEY,
+                apiUrl: env.LLM_API_URL || DEFAULT_OPENROUTER_URL,
+                model: env.OPENROUTER_MODEL || env.LLM_MODEL || DEFAULT_OPENROUTER_MODEL,
+                provider: 'openrouter',
+                thinking
+            },
+            provider: 'OpenRouter'
+        };
+    }
+
+    // Priority 5: OpenAI-compatible (requires explicit URL and model)
     if (env.OPENAI_API_KEY) {
         if (!env.LLM_API_URL || !env.LLM_MODEL) {
             throw new Error(
@@ -376,7 +417,9 @@ export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: str
         };
     }
 
-    throw new Error('No LLM API key found. Set OPENROUTER_API_KEY (recommended), NVIDIA_API_KEY, or OPENAI_API_KEY.');
+    throw new Error(
+        'No LLM API key found. Set CEBRAS_API_KEY, NVIDIA_API_KEY, XIAOMI_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY with LLM_API_URL + LLM_MODEL.'
+    );
 }
 
 export function createXiaomiConfig(env: LLMEnv): { config: LLMConfig; provider: string } | null {
@@ -675,7 +718,8 @@ export async function fetchTopStories(date?: string): Promise<AlgoliaHit[]> {
         const startTimestamp = Math.floor(new Date(date + 'T00:00:00Z').getTime() / 1000);
         const endTimestamp = startTimestamp + 86400; // +24 hours
 
-        const url = `${ALGOLIA_API}/search?tags=story&numericFilters=created_at_i>=${startTimestamp},created_at_i<${endTimestamp},points>10&hitsPerPage=50`;
+        const numericFilters = `created_at_i>=${startTimestamp},created_at_i<${endTimestamp},points>10`;
+        const url = `${ALGOLIA_API}/search?tags=story&numericFilters=${encodeURIComponent(numericFilters)}&hitsPerPage=50`;
         const res = await fetch(url);
         const data = await res.json() as { hits?: AlgoliaHit[] };
 
@@ -688,7 +732,8 @@ export async function fetchTopStories(date?: string): Promise<AlgoliaHit[]> {
     const now = Math.floor(Date.now() / 1000);
     const yesterday = now - 86400;
 
-    const url = `${ALGOLIA_API}/search?tags=story&numericFilters=created_at_i>${yesterday},points>10&hitsPerPage=50`;
+    const numericFilters = `created_at_i>${yesterday},points>10`;
+    const url = `${ALGOLIA_API}/search?tags=story&numericFilters=${encodeURIComponent(numericFilters)}&hitsPerPage=50`;
     const res = await fetch(url);
     const data = await res.json() as { hits?: AlgoliaHit[] };
     const hits = data.hits || [];
@@ -825,9 +870,9 @@ export async function probeLLM(config: LLMConfig): Promise<{ ok: boolean; error?
             { role: "system", content: "You are a health check." },
             { role: "user", content: "Reply with OK." }
         ],
-        temperature: isNvidiaApi(config) ? 0.6 : 0,
-        max_tokens: 32
+        temperature: isNvidiaApi(config) ? 0.6 : 0
     };
+    applyMaxTokens(requestBody, config, 32);
 
     // Use Instant Mode for Nvidia NIM to avoid 524 timeout during health check
     applyThinkingMode(requestBody, config, false);
@@ -847,24 +892,71 @@ export async function resolveLLMConfigWithFallback(
     env: LLMEnv,
     logger: LLMLogger = { info: () => {}, error: () => {} }
 ): Promise<{ config: LLMConfig; provider: string; usedFallback: boolean }>{
-    const primary = createLLMConfig(env);
-    logger.info(`Primary LLM: ${primary.provider} with model: ${primary.config.model}`);
-
-    const xiaomiFallback = createXiaomiConfig(env);
-    if (primary.provider === 'Nvidia NIM' && xiaomiFallback) {
-        logger.info('Running Nvidia health check...');
-        const probe = await probeLLM(primary.config);
-        if (!probe.ok) {
-            const detail = probe.error ? ` (${probe.error})` : '';
-            logger.error(`Nvidia health check failed${detail}. Falling back to ${xiaomiFallback.provider}.`);
-            logger.info(`Active LLM: ${xiaomiFallback.provider} with model: ${xiaomiFallback.config.model}`);
-            return { config: xiaomiFallback.config, provider: xiaomiFallback.provider, usedFallback: true };
-        }
-        logger.info('Nvidia health check ok.');
+    // Try providers in order: Cebras -> Nvidia -> Xiaomi -> OpenRouter
+    const providers: { config: LLMConfig; provider: string }[] = [];
+    
+    // Build list of available providers
+    if (env.CEBRAS_API_KEY) {
+        providers.push(createLLMConfig(env));
     }
-
-    logger.info(`Active LLM: ${primary.provider} with model: ${primary.config.model}`);
-    return { config: primary.config, provider: primary.provider, usedFallback: false };
+    if (env.NVIDIA_API_KEY) {
+        const nvidia = createLLMConfig({ ...env, CEBRAS_API_KEY: undefined });
+        providers.push(nvidia);
+    }
+    const xiaomi = createXiaomiConfig(env);
+    if (xiaomi) {
+        providers.push(xiaomi);
+    }
+    if (env.OPENROUTER_API_KEY) {
+        const openrouter = createLLMConfig({ 
+            ...env, 
+            CEBRAS_API_KEY: undefined, 
+            NVIDIA_API_KEY: undefined,
+            XIAOMI_API_KEY: undefined 
+        });
+        providers.push(openrouter);
+    }
+    
+    if (providers.length === 0) {
+        throw new Error('No LLM API key found. Set CEBRAS_API_KEY, NVIDIA_API_KEY, XIAOMI_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.');
+    }
+    
+    // Try each provider with health check
+    for (let i = 0; i < providers.length; i++) {
+        const current = providers[i]!;
+        logger.info(`Trying LLM: ${current.provider} with model: ${current.config.model}`);
+        
+        // Run health check for Cebras and Nvidia
+        if (current.provider === 'Cebras' || current.provider === 'Nvidia NIM') {
+            logger.info(`Running ${current.provider} health check...`);
+            const probe = await probeLLM(current.config);
+            if (!probe.ok) {
+                const detail = probe.error ? ` (${probe.error})` : '';
+                logger.error(`${current.provider} health check failed${detail}.`);
+                
+                // Try next provider
+                if (i < providers.length - 1) {
+                    const next = providers[i + 1]!;
+                    logger.info(`Falling back to ${next.provider}...`);
+                    continue;
+                } else {
+                    logger.error('All providers failed health checks.');
+                    throw new Error(`All LLM providers failed. Last error: ${probe.error || 'Unknown'}`);
+                }
+            }
+            logger.info(`${current.provider} health check ok.`);
+        }
+        
+        logger.info(`Active LLM: ${current.provider} with model: ${current.config.model}`);
+        return { 
+            config: current.config, 
+            provider: current.provider, 
+            usedFallback: i > 0 
+        };
+    }
+    
+    // Should not reach here, but just in case
+    throw new Error('Failed to find a working LLM provider.');
 }
 
 /**
@@ -891,9 +983,9 @@ export async function summarizeStory(
                 { role: "user", content: prompt }
             ],
             temperature: thinkingParams ? thinkingParams.temperature : SUMMARY_TEMPERATURE,
-            top_p: thinkingParams ? thinkingParams.topP : SUMMARY_TOP_P,
-            max_tokens: MAX_TOKENS_SUMMARY
+            top_p: thinkingParams ? thinkingParams.topP : SUMMARY_TOP_P
         };
+        applyMaxTokens(requestBody, config, MAX_TOKENS_SUMMARY);
 
         // Apply thinking mode with provider-specific format
         // Nvidia uses 'thinking' field or chat_template_kwargs
@@ -983,9 +1075,9 @@ export async function generateDigest(
                 { role: "system", content: "You are a tech journalist writing a daily Hacker News digest." },
                 { role: "user", content: prompt }
             ],
-            temperature: thinkingParams ? thinkingParams.temperature : 0.5,
-            max_tokens: MAX_TOKENS_DIGEST
+            temperature: thinkingParams ? thinkingParams.temperature : 0.5
         };
+        applyMaxTokens(requestBody, config, MAX_TOKENS_DIGEST);
 
         if (thinkingParams) {
             requestBody.top_p = thinkingParams.topP;
