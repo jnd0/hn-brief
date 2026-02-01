@@ -2,11 +2,11 @@
   {
     "date": "2026-02-01",
     "hasDigest": true,
-    "storyCount": 20
+    "storyCount": 2
   },
   {
     "date": "2026-01-31",
-    "hasDigest": true,
+    "hasDigest": false,
     "storyCount": 20
   },
   {
