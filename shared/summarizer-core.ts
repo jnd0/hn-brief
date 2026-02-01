@@ -252,8 +252,10 @@ async function fetchCompletion(
         throw new Error(`API Error: ${truncateText(String(message), 500)}`);
     }
 
+    const message = data?.choices?.[0]?.message;
     const content =
-        data?.choices?.[0]?.message?.content ??
+        message?.content ??
+        message?.reasoning_content ??
         data?.choices?.[0]?.text ??
         "";
 
@@ -315,8 +317,9 @@ async function fetchStreamCompletion(
                 try {
                     const json = JSON.parse(dataStr);
                     const delta = json.choices?.[0]?.delta;
-                    if (delta?.content) {
-                        finalContent += delta.content;
+                    const deltaContent = delta?.content || delta?.reasoning_content;
+                    if (deltaContent) {
+                        finalContent += deltaContent;
                         if (stopAfter && stopAfter.length > 0) {
                             const hasAllStops = stopAfter.every((seq) => finalContent.includes(seq));
                             if (hasAllStops) {
@@ -326,7 +329,6 @@ async function fetchStreamCompletion(
                             }
                         }
                     }
-                    // We can also capture delta.reasoning_content if needed
                 } catch (e) {
                     console.error("Error parsing stream line:", dataStr.slice(0, 100));
                 }
@@ -784,7 +786,7 @@ You MUST provide BOTH summaries in exactly this XML format:
 </Content Summary>
 
 <Discussion Summary>
-[2-4 sentences summarizing the key discussion points. Include: main themes, disagreements, technical insights, community reactions. Use flowing prose, not bullet points unless there are clearly distinct themes.]
+[2-4 sentences summarizing the key discussion points. Include: main themes, disagreements, technical insights, community reactions. Use flowing prose, not bullet points unless there are clearly distinct themes. DO NOT start with "The Hacker News discussion" or similar robotic phrases. Jump straight into the substance: what people debated, what insights emerged, where they disagreed. Write like a journalist, not a robot.]
 </Discussion Summary>
 
 CRITICAL:
@@ -1052,6 +1054,58 @@ export async function summarizeStory(
             postType: 'article'
         };
     }
+}
+
+/**
+ * Process multiple stories with rate limiting
+ * Handles batching, sequential processing, and delays between requests
+ * to avoid overwhelming LLM APIs (especially Cebras with its tokens-per-minute limits)
+ */
+export async function processStoriesWithRateLimit(
+    storyDetails: { hit: AlgoliaHit; details: StoryDetails }[],
+    llmConfig: LLMConfig,
+    options?: {
+        batchSize?: number;
+        storyDelayMs?: number;
+        batchDelayMs?: number;
+        indent?: string;
+    }
+): Promise<ProcessedStory[]> {
+    const {
+        batchSize = 3,
+        storyDelayMs = 2000,
+        batchDelayMs = 10000,
+        indent = ''
+    } = options || {};
+    
+    const processedStories: ProcessedStory[] = [];
+    const totalBatches = Math.ceil(storyDetails.length / batchSize);
+    
+    for (let i = 0; i < storyDetails.length; i += batchSize) {
+        const batch = storyDetails.slice(i, i + batchSize);
+        const batchNum = Math.floor(i / batchSize) + 1;
+        console.log(`${indent}Processing batch ${batchNum}/${totalBatches} (${batch.length} stories)...`);
+        
+        // Process sequentially with delay between each
+        for (const { hit, details } of batch) {
+            const summary = await summarizeStory(hit, details.children || [], llmConfig);
+            processedStories.push(summary);
+            
+            // Small delay between stories to avoid overwhelming API
+            if (processedStories.length < storyDetails.length) {
+                await new Promise(r => setTimeout(r, storyDelayMs));
+            }
+        }
+        
+        // Delay between batches
+        if (i + batchSize < storyDetails.length) {
+            console.log(`${indent}⏳ Waiting ${batchDelayMs/1000}s before next batch...`);
+            await new Promise(r => setTimeout(r, batchDelayMs));
+        }
+    }
+    
+    console.log(`${indent}✅ Summarized ${processedStories.length} stories`);
+    return processedStories;
 }
 
 /**

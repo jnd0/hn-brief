@@ -102,6 +102,27 @@ Comment selection (optional):
 - Worker configs are in `workers/*/wrangler.jsonc`
 - Update `archive.json` when adding new summary dates
 
+## Code Duplication Prevention
+
+**CRITICAL**: Avoid duplicating logic between `scripts/summarizer.ts` and `workers/summarizer/index.ts`. Both files perform similar operations but for different environments (local vs Cloudflare Worker).
+
+**Common duplication issues:**
+- Story batch processing and rate limiting
+- Error handling patterns
+- Data transformation logic
+- API request formatting
+
+**Solution**: Extract shared logic into `shared/summarizer-core.ts`:
+- Create reusable functions (e.g., `processStoriesWithRateLimit()`)
+- Export shared types and interfaces
+- Keep environment-specific code (file I/O, GitHub commits) in respective files
+
+**When adding new features:**
+1. Check if similar logic exists in the other file
+2. If yes, refactor into shared function first
+3. Update both files to use the shared function
+4. Only keep environment-specific differences (logging, storage, etc.)
+
 ## Comment Selection Algorithm
 
 Comments are selected using a scoring algorithm (not by position). Key functions in `shared/summarizer-core.ts`:
