@@ -60,13 +60,17 @@ hn-brief/
 ## Environment Variables
 
 Required for LLM summarization:
-- `NVIDIA_API_KEY` - Primary LLM provider (default model: `moonshotai/kimi-k2.5`)
-- `OPENROUTER_API_KEY` - Fallback LLM provider
-- `LLM_MODEL` - Override model name (provider-specific)
-- `LLM_THINKING_FORCE` - Force NIM thinking mode for both articles and digest (`true`/`false`)
+- `CEBRAS_API_KEY` - Primary LLM provider (default model: `qwen-3-235b-a22b-instruct-2507`)
+- `CEBRAS_API_URL` - Override Cebras API URL
+- `CEBRAS_API_MODEL` - Override Cebras model
+- `NVIDIA_API_KEY` - Fallback LLM provider (default model: `moonshotai/kimi-k2.5`)
+- `XIAOMI_API_KEY` - Fallback LLM provider (default model: `mimo-v2-flash`)
+- `OPENROUTER_API_KEY` - Last-resort LLM provider
+- `LLM_MODEL` - Legacy model override (OpenRouter/Nvidia/OpenAI-compatible)
+- `LLM_THINKING_FORCE` - Force thinking mode for providers that support it (`true`/`false`)
 - `LLM_THINKING` - Alias for `LLM_THINKING_FORCE`
 
-Default behavior with Nvidia NIM: article summaries use Instant mode (temp 0.6), digest uses Thinking mode (temp 1.0). Set `LLM_THINKING_FORCE` to force both.
+When using Nvidia NIM, article summaries use Instant mode (temp 0.6) and digest uses Thinking mode (temp 1.0). Set `LLM_THINKING_FORCE` to force both.
 
 For GitHub auto-commit (workers only):
 - `GITHUB_TOKEN`, `REPO_OWNER`, `REPO_NAME`
@@ -85,7 +89,9 @@ Comment selection (optional):
 ## API Integration
 
 - **HN Algolia API**: `https://hn.algolia.com/api/v1` for story fetching
+- **Cebras**: `https://api.cerebras.ai/v1/chat/completions`
 - **Nvidia NIM**: `https://integrate.api.nvidia.com/v1/chat/completions`
+- **Xiaomi MiMo**: `https://api.xiaomimimo.com/v1/chat/completions`
 - **OpenRouter**: OpenAI-compatible endpoint for LLM calls
 - **GitHub API**: For automated commits (workers)
 

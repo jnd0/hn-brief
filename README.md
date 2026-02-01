@@ -9,7 +9,7 @@ Too busy to scroll through Hacker News every day? HN-Brief automatically fetches
 ## How It Works
 
 1. **Fetch** — A Cloudflare Worker runs every 2 hours, pulling the top stories from the [HN Algolia API](https://hn.algolia.com/api).
-2. **Summarize** — Each story + its comments are sent to an LLM (via Nvidia NIM or [OpenRouter](https://openrouter.ai)).
+2. **Summarize** — Each story + its comments are sent to an LLM (via Cebras, Nvidia NIM, Xiaomi MiMo, or [OpenRouter](https://openrouter.ai) as last resort).
 3. **Digest** — All summaries are combined into a single, flowing narrative for quick reading.
 4. **Publish** — The Worker commits the markdown files directly to GitHub, triggering a Cloudflare Pages redeploy.
 
@@ -25,7 +25,7 @@ Too busy to scroll through Hacker News every day? HN-Brief automatically fetches
 
 ### Prerequisites
 - [Bun](https://bun.sh/) (v1.0+)
-- API key for summarization (Nvidia NIM, OpenRouter, or OpenAI-compatible)
+- API key for summarization (Cebras, Nvidia NIM, Xiaomi MiMo, OpenRouter, or OpenAI-compatible)
 
 ### Installation
 
@@ -90,12 +90,20 @@ bun run summarize -- -d 2025-12-25 -g
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `NVIDIA_API_KEY` | Nvidia NIM API key (recommended for K2.5) | Yes (or one of below) |
-| `OPENROUTER_API_KEY` | OpenRouter API key | Yes (or one of below) |
+| `CEBRAS_API_KEY` | Cebras API key (default provider) | Yes (or one of below) |
+| `CEBRAS_API_URL` | Cebras API URL override | No |
+| `CEBRAS_API_MODEL` | Cebras model (default: `qwen-3-235b-a22b-instruct-2507`) | No |
+| `NVIDIA_API_KEY` | Nvidia NIM API key (fallback) | Yes (or one of below) |
+| `NVIDIA_MODEL` | Nvidia model override (default: `moonshotai/kimi-k2.5`) | No |
+| `XIAOMI_API_KEY` | Xiaomi MiMo API key (fallback) | Yes (or one of below) |
+| `XIAOMI_API_URL` | Xiaomi API URL override | No |
+| `XIAOMI_MODEL` | Xiaomi model override (default: `mimo-v2-flash`) | No |
+| `OPENROUTER_API_KEY` | OpenRouter API key (last resort) | Yes (or one of below) |
+| `OPENROUTER_MODEL` | OpenRouter model override | No |
 | `OPENAI_API_KEY` | OpenAI-compatible API key | Yes (or another key) |
-| `LLM_MODEL` | Model to use (default: `moonshotai/kimi-k2.5` on NIM) | No |
-| `LLM_API_URL` | Override LLM API URL | No |
-| `LLM_THINKING_FORCE` | Force NIM thinking mode for both articles and digest (`true`/`false`) | No |
+| `LLM_MODEL` | Legacy model override for OpenRouter/Nvidia/OpenAI-compatible | No |
+| `LLM_API_URL` | Override LLM API URL (OpenRouter/Nvidia/OpenAI-compatible) | No |
+| `LLM_THINKING_FORCE` | Force thinking mode for providers that support it (`true`/`false`) | No |
 | `LLM_THINKING` | Alias for `LLM_THINKING_FORCE` | No |
 | `GITHUB_TOKEN` | GitHub PAT for automated commits | For Worker only |
 | `REPO_OWNER` | GitHub username | For Worker only |
@@ -103,7 +111,7 @@ bun run summarize -- -d 2025-12-25 -g
 | `MAX_COMMENT_CHARS` | Character budget for comments (default: 15000) | No |
 | `MAX_COMMENTS_PER_ROOT` | Max comments per top-level thread (default: 3) | No |
 
-Default behavior with Nvidia NIM: article summaries run in Instant mode (temp 0.6), digest runs in Thinking mode (temp 1.0). Set `LLM_THINKING_FORCE` to force both.
+When using Nvidia NIM, article summaries run in Instant mode (temp 0.6) and digest runs in Thinking mode (temp 1.0). Set `LLM_THINKING_FORCE` to force both.
 
 
 ## Project Structure
