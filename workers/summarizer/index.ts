@@ -6,7 +6,7 @@ import {
     type LLMEnv,
     fetchTopStories,
     fetchStoryDetails,
-    summarizeStory,
+    processStoriesWithRateLimit,
     generateDigest,
     formatArticleMarkdown,
     formatDigestMarkdown,
@@ -99,36 +99,8 @@ async function generateDailySummary(env: Env) {
     );
     console.log(`Fetched all story details.`);
 
-    // 3. Process LLM calls with rate limiting for Cebras
-    // Cebras is fast but has tokens-per-minute limits
-    // Process sequentially with delays between stories
-    const BATCH_SIZE = 3;
-    const STORY_DELAY_MS = 2000; // 2 seconds between stories
-    const BATCH_DELAY_MS = 10000; // 10 seconds between batches
-    const processedStories: ProcessedStory[] = [];
-
-    for (let i = 0; i < storyDetails.length; i += BATCH_SIZE) {
-        const batch = storyDetails.slice(i, i + BATCH_SIZE);
-        console.log(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(storyDetails.length / BATCH_SIZE)} (${batch.length} stories)...`);
-
-        // Process sequentially with delay between each
-        for (const { hit, details } of batch) {
-            const summary = await summarizeStory(hit, details.children || [], llmConfig);
-            processedStories.push(summary);
-            
-            // Small delay between stories
-            if (processedStories.length < storyDetails.length) {
-                await new Promise(r => setTimeout(r, STORY_DELAY_MS));
-            }
-        }
-
-        // Delay between batches
-        if (i + BATCH_SIZE < storyDetails.length) {
-            console.log(`⏳ Waiting ${BATCH_DELAY_MS/1000}s before next batch...`);
-            await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
-        }
-    }
-    console.log(`Summarized ${processedStories.length} stories.`);
+    // 3. Process LLM calls with rate limiting using shared function
+    const processedStories = await processStoriesWithRateLimit(storyDetails, llmConfig);
 
     // 4. Generate Markdown using shared formatters
     const articleMd = formatArticleMarkdown(processedStories, date);

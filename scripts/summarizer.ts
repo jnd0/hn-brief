@@ -11,7 +11,7 @@ import {
   type AlgoliaHit,
   fetchTopStories,
   fetchStoryDetails,
-  summarizeStory,
+  processStoriesWithRateLimit,
   generateDigest,
   formatArticleMarkdown,
   formatDigestMarkdown,
@@ -179,36 +179,12 @@ async function processDate(date: string | null, mode: string): Promise<{ date: s
     console.log(`   ⚠️ No API key found, running in simulation mode`);
   }
 
-  // Process LLM calls with rate limiting for Cebras
-  // Cebras is very fast but has tokens-per-minute limits
-  // Add small delay between stories + batch delays
-  const BATCH_SIZE = 3;
-  const STORY_DELAY_MS = 2000; // 2 seconds between each story
-  const BATCH_DELAY_MS = 10000; // 10 seconds between batches
-  const processedStories: ProcessedStory[] = [];
-
-  for (let i = 0; i < storyDetails.length; i += BATCH_SIZE) {
-    const batch = storyDetails.slice(i, i + BATCH_SIZE);
-    console.log(`   Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(storyDetails.length / BATCH_SIZE)} (${batch.length} stories)...`);
-
-    // Process sequentially with delay between each
-    for (const { hit, details } of batch) {
-      const summary = await summarizeStory(hit, details.children || [], llmConfig);
-      processedStories.push(summary);
-      
-      // Small delay between stories to avoid overwhelming Cebras
-      if (processedStories.length < storyDetails.length) {
-        await new Promise(r => setTimeout(r, STORY_DELAY_MS));
-      }
-    }
-
-    // Delay between batches
-    if (i + BATCH_SIZE < storyDetails.length) {
-      console.log(`   ⏳ Waiting ${BATCH_DELAY_MS/1000}s before next batch...`);
-      await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
-    }
-  }
-  console.log(`   ✅ Summarized ${processedStories.length} stories`);
+  // Process LLM calls with rate limiting using shared function
+  const processedStories = await processStoriesWithRateLimit(
+    storyDetails,
+    llmConfig,
+    { indent: '   ' }
+  );
 
   await mkdir(folderPath, { recursive: true });
 

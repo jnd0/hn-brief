@@ -1057,6 +1057,58 @@ export async function summarizeStory(
 }
 
 /**
+ * Process multiple stories with rate limiting
+ * Handles batching, sequential processing, and delays between requests
+ * to avoid overwhelming LLM APIs (especially Cebras with its tokens-per-minute limits)
+ */
+export async function processStoriesWithRateLimit(
+    storyDetails: { hit: AlgoliaHit; details: StoryDetails }[],
+    llmConfig: LLMConfig,
+    options?: {
+        batchSize?: number;
+        storyDelayMs?: number;
+        batchDelayMs?: number;
+        indent?: string;
+    }
+): Promise<ProcessedStory[]> {
+    const {
+        batchSize = 3,
+        storyDelayMs = 2000,
+        batchDelayMs = 10000,
+        indent = ''
+    } = options || {};
+    
+    const processedStories: ProcessedStory[] = [];
+    const totalBatches = Math.ceil(storyDetails.length / batchSize);
+    
+    for (let i = 0; i < storyDetails.length; i += batchSize) {
+        const batch = storyDetails.slice(i, i + batchSize);
+        const batchNum = Math.floor(i / batchSize) + 1;
+        console.log(`${indent}Processing batch ${batchNum}/${totalBatches} (${batch.length} stories)...`);
+        
+        // Process sequentially with delay between each
+        for (const { hit, details } of batch) {
+            const summary = await summarizeStory(hit, details.children || [], llmConfig);
+            processedStories.push(summary);
+            
+            // Small delay between stories to avoid overwhelming API
+            if (processedStories.length < storyDetails.length) {
+                await new Promise(r => setTimeout(r, storyDelayMs));
+            }
+        }
+        
+        // Delay between batches
+        if (i + batchSize < storyDetails.length) {
+            console.log(`${indent}⏳ Waiting ${batchDelayMs/1000}s before next batch...`);
+            await new Promise(r => setTimeout(r, batchDelayMs));
+        }
+    }
+    
+    console.log(`${indent}✅ Summarized ${processedStories.length} stories`);
+    return processedStories;
+}
+
+/**
  * Generate the daily digest from processed stories
  */
 export async function generateDigest(
