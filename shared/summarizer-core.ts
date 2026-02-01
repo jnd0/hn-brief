@@ -850,7 +850,7 @@ export function parseSummaryResponse(content: string): { summary: string; discus
         if (remaining.length > 50) {
             return {
                 summary: contentMatch[1].trim(),
-                discussion: remaining.replace(/<\/?[^>]+(>|$)/g, '').slice(0, 800)
+                discussion: remaining.replace(/<\/?[^>]+(>|$)/g, '').trim()
             };
         }
     }
