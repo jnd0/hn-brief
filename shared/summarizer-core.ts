@@ -252,8 +252,10 @@ async function fetchCompletion(
         throw new Error(`API Error: ${truncateText(String(message), 500)}`);
     }
 
+    const message = data?.choices?.[0]?.message;
     const content =
-        data?.choices?.[0]?.message?.content ??
+        message?.content ??
+        message?.reasoning_content ??
         data?.choices?.[0]?.text ??
         "";
 
@@ -315,8 +317,9 @@ async function fetchStreamCompletion(
                 try {
                     const json = JSON.parse(dataStr);
                     const delta = json.choices?.[0]?.delta;
-                    if (delta?.content) {
-                        finalContent += delta.content;
+                    const deltaContent = delta?.content || delta?.reasoning_content;
+                    if (deltaContent) {
+                        finalContent += deltaContent;
                         if (stopAfter && stopAfter.length > 0) {
                             const hasAllStops = stopAfter.every((seq) => finalContent.includes(seq));
                             if (hasAllStops) {
@@ -326,7 +329,6 @@ async function fetchStreamCompletion(
                             }
                         }
                     }
-                    // We can also capture delta.reasoning_content if needed
                 } catch (e) {
                     console.error("Error parsing stream line:", dataStr.slice(0, 100));
                 }
