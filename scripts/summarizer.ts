@@ -172,27 +172,32 @@ async function processDate(date: string, mode: string): Promise<{ date: string; 
     console.log(`   ⚠️ No API key found, running in simulation mode`);
   }
 
-  // Process LLM calls in SMALL BATCHES to respect 40 rpm limit
-  // 40 rpm = batch of 5 every 10 seconds is safe
-  const BATCH_SIZE = 5;
-  const BATCH_DELAY_MS = 10000; // 10 seconds between batches
+  // Process LLM calls with rate limiting for Cebras
+  // Cebras is very fast but has tokens-per-minute limits
+  // Add small delay between stories + batch delays
+  const BATCH_SIZE = 3;
+  const STORY_DELAY_MS = 2000; // 2 seconds between each story
+  const BATCH_DELAY_MS = 5000; // 5 seconds between batches
   const processedStories: ProcessedStory[] = [];
 
   for (let i = 0; i < storyDetails.length; i += BATCH_SIZE) {
     const batch = storyDetails.slice(i, i + BATCH_SIZE);
     console.log(`   Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(storyDetails.length / BATCH_SIZE)} (${batch.length} stories)...`);
 
-    const batchResults = await Promise.all(
-      batch.map(async ({ hit, details }) => {
-        const summary = await summarizeStory(hit, details.children || [], llmConfig);
-        return summary;
-      })
-    );
+    // Process sequentially with delay between each
+    for (const { hit, details } of batch) {
+      const summary = await summarizeStory(hit, details.children || [], llmConfig);
+      processedStories.push(summary);
+      
+      // Small delay between stories to avoid overwhelming Cebras
+      if (processedStories.length < storyDetails.length) {
+        await new Promise(r => setTimeout(r, STORY_DELAY_MS));
+      }
+    }
 
-    processedStories.push(...batchResults);
-
-    // Delay between batches to respect 40 rpm limit
+    // Delay between batches
     if (i + BATCH_SIZE < storyDetails.length) {
+      console.log(`   ⏳ Waiting ${BATCH_DELAY_MS/1000}s before next batch...`);
       await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
     }
   }
@@ -207,8 +212,12 @@ async function processDate(date: string, mode: string): Promise<{ date: string; 
     console.log(`   ✅ Saved articles`);
   }
 
-  // Generate Digest Mode
-  if (mode === 'all' || mode === 'digest') {
+  // Wait before generating digest to avoid rate limits
+  if ((mode === 'all' || mode === 'digest') && processedStories.length > 0) {
+    console.log(`   ⏳ Waiting 5s before generating digest...`);
+    await new Promise(r => setTimeout(r, 5000));
+    
+    // Generate Digest Mode
     const digestContent = await generateDigest(processedStories, llmConfig);
     const digestMd = formatDigestMarkdown(digestContent, date, processedStories.length);
     await Bun.write(`${folderPath}/${day}-digest.md`, digestMd);
