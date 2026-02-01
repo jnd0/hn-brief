@@ -98,7 +98,7 @@ const DEFAULT_XIAOMI_URL = "https://api.xiaomimimo.com/v1/chat/completions";
 const DEFAULT_XIAOMI_MODEL = "mimo-v2-flash";
 
 export const MAX_TOKENS_FOR_REASONING = 16000;
-export const MAX_TOKENS_SUMMARY = 1200;
+export const MAX_TOKENS_SUMMARY = 4000;
 export const MAX_TOKENS_DIGEST = MAX_TOKENS_FOR_REASONING;
 const SUMMARY_TEMPERATURE = 0.6;
 const SUMMARY_TOP_P = 0.95;
