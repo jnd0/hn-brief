@@ -137,7 +137,17 @@ It needs to be over 50 chars so I am typing more words here to ensure it is pick
 });
 
 describe("LLM Configuration", () => {
-  test("createLLMConfig prioritizes Cebras", () => {
+  test("createLLMConfig prioritizes OpenRouter", () => {
+    const env: LLMEnv = {
+      OPENROUTER_API_KEY: "openrouter-key",
+      CEBRAS_API_KEY: "cebras-key",
+      NVIDIA_API_KEY: "nvidia-key"
+    };
+    const { provider } = createLLMConfig(env);
+    expect(provider).toBe("OpenRouter");
+  });
+
+  test("createLLMConfig falls back to Cebras when no OpenRouter key", () => {
     const env: LLMEnv = {
       CEBRAS_API_KEY: "cebras-key",
       NVIDIA_API_KEY: "nvidia-key"

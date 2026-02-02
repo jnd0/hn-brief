@@ -35,7 +35,7 @@ const { config: llmConfig, provider } = await resolveLLMConfigWithFallback({
   XIAOMI_API_KEY: process.env.XIAOMI_API_KEY,
   XIAOMI_API_URL: process.env.XIAOMI_API_URL,
   XIAOMI_MODEL: process.env.XIAOMI_MODEL,
-  // Last resort: OpenRouter
+  // Preferred: OpenRouter
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
   OPENROUTER_MODEL: process.env.OPENROUTER_MODEL,
   // Alternative providers
@@ -197,8 +197,8 @@ async function processDate(date: string | null, mode: string): Promise<{ date: s
 
   // Wait before generating digest to avoid rate limits
   if ((mode === 'all' || mode === 'digest') && processedStories.length > 0) {
-    console.log(`   ⏳ Waiting 10s before generating digest...`);
-    await new Promise(r => setTimeout(r, 10000));
+    console.log(`   ⏳ Waiting 5s before generating digest...`);
+    await new Promise(r => setTimeout(r, 5000));
     
     // Generate Digest Mode
     const digestContent = await generateDigest(processedStories, llmConfig);
