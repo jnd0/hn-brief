@@ -94,6 +94,7 @@ const DEFAULT_CEBRAS_URL = "https://api.cerebras.ai/v1/chat/completions";
 const DEFAULT_CEBRAS_MODEL = "qwen-3-235b-a22b-instruct-2507";
 const DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_OPENROUTER_MODEL = "stepfun/step-3.5-flash:free";
+const OPENROUTER_CONTENT_FILTER_FALLBACK_MODEL = "arcee-ai/trinity-large-preview:free";
 const DEFAULT_NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
 const DEFAULT_NVIDIA_MODEL = "moonshotai/kimi-k2.5";
 const DEFAULT_XIAOMI_URL = "https://api.xiaomimimo.com/v1/chat/completions";
@@ -277,6 +278,49 @@ async function fetchCompletion(
     body: Record<string, unknown>,
     fetcher?: FetchLike
 ): Promise<string> {
+    const meta = await fetchCompletionWithMeta(url, apiKey, body, fetcher);
+    // If provider indicates content filtering, surface this as an error.
+    if (!meta.content.trim() && (meta.finishReason === 'content_filter' || meta.nativeFinishReason === 'content_filter')) {
+        throw new Error('Content filtered');
+    }
+    return meta.content;
+}
+
+function coerceContentToString(content: unknown): string {
+    if (typeof content === 'string') return content;
+    if (!content) return '';
+
+    // OpenAI-style content parts
+    if (Array.isArray(content)) {
+        let out = '';
+        for (const part of content) {
+            if (!part) continue;
+            if (typeof part === 'string') {
+                out += part;
+                continue;
+            }
+            const anyPart = part as any;
+            if (anyPart.type === 'text' && typeof anyPart.text === 'string') {
+                out += anyPart.text;
+                continue;
+            }
+            if (typeof anyPart.text === 'string') {
+                out += anyPart.text;
+                continue;
+            }
+        }
+        return out;
+    }
+
+    return '';
+}
+
+async function fetchCompletionWithMeta(
+    url: string,
+    apiKey: string,
+    body: Record<string, unknown>,
+    fetcher?: FetchLike
+): Promise<{ content: string; finishReason?: string; nativeFinishReason?: string }> {
     const _fetch = fetcher || fetch;
     const response = await _fetch(url, {
         method: "POST",
@@ -298,14 +342,29 @@ async function fetchCompletion(
         throw new Error(`API Error: ${truncateText(String(message), 500)}`);
     }
 
-    const message = data?.choices?.[0]?.message;
-    const content =
-        message?.content ??
-        message?.reasoning_content ??
-        data?.choices?.[0]?.text ??
+    const choice = data?.choices?.[0];
+    const message = choice?.message;
+    const finishReason = choice?.finish_reason;
+    const nativeFinishReason = choice?.native_finish_reason;
+
+    const primary =
+        coerceContentToString(message?.content) ||
+        coerceContentToString(message?.reasoning_content) ||
+        coerceContentToString(message?.refusal) ||
+        coerceContentToString(choice?.text) ||
         "";
 
-    return typeof content === 'string' ? content : '';
+    // Some OpenRouter providers return the actual answer in `message.reasoning`.
+    // Only use it when it contains the expected XML tags to avoid publishing partial reasoning.
+    const reasoning = coerceContentToString((message as any)?.reasoning);
+    const reasoningLooksLikeAnswer = /<Content Summary>|<Discussion Summary>/.test(reasoning);
+    const content = primary || (reasoningLooksLikeAnswer ? reasoning : "");
+
+    return {
+        content,
+        finishReason: typeof finishReason === 'string' ? finishReason : undefined,
+        nativeFinishReason: typeof nativeFinishReason === 'string' ? nativeFinishReason : undefined
+    };
 }
 
 /**
@@ -804,16 +863,17 @@ Comments: ${commentText}
 You MUST provide BOTH summaries in exactly this XML format:
 
 <Content Summary>
-[2-3 sentences summarizing the ${typeLabel.toLowerCase()} content]
+[3-4 sentences summarizing the ${typeLabel.toLowerCase()} content. Include at least one specific detail (a claim, number, named project, or concrete action).]
 </Content Summary>
 
 <Discussion Summary>
-[2-4 sentences summarizing the key discussion points. Include: main themes, disagreements, technical insights, community reactions. Use flowing prose, not bullet points unless there are clearly distinct themes. DO NOT start with "The Hacker News discussion" or similar robotic phrases. Jump straight into the substance: what people debated, what insights emerged, where they disagreed. Write like a journalist, not a robot.]
+[4-6 sentences summarizing the key discussion points. Include: main themes, disagreements, technical insights, community reactions. Use flowing prose, not bullet points unless there are clearly distinct themes. DO NOT start with "The discussion", "The Hacker News discussion", or "The thread". Jump straight into the substance: what people debated, what insights emerged, where they disagreed. Write like a journalist, not a robot.]
 </Discussion Summary>
 
 CRITICAL:
 - BOTH sections are REQUIRED - never omit Discussion Summary
 - Use the exact XML tags shown above (including the forward slash in closing tags)
+- Write in English only. No non-English words or phrases.
 - Output will be parsed programmatically using these specific tags`;
 }
 
@@ -830,7 +890,7 @@ export function buildDigestPrompt(stories: ProcessedStory[]): string {
 Here are today's top stories with their individual summaries:
 ${storiesContext}
 
-Write a cohesive, engaging 15-20 paragraph digest that:
+Write a cohesive, engaging digest that is at least 14 paragraphs (2-4 sentences each) and roughly 1200-2200 words:
 1. Opens with the most significant/interesting story of the day (jump straight into it)
 2. Groups related topics together
 3. Highlights interesting patterns or themes
@@ -841,7 +901,8 @@ CRITICAL STYLE RULES:
 - NO "Good morning", "Grab your coffee", "Welcome back", or other fluff.
 - NO generic intros like "Today on Hacker News..."
 - Start directly with the first story/topic.
-- No bullet points or headers. flowing prose only.`;
+- No bullet points or headers. flowing prose only.
+- Write in English only.`;
 }
 
 // ============================================================================
@@ -858,8 +919,8 @@ export function parseSummaryResponse(content: string): { summary: string; discus
     // If we have both tags, perfect!
     if (contentMatch?.[1] && discussionMatch?.[1]) {
         return {
-            summary: contentMatch[1].trim(),
-            discussion: discussionMatch[1].trim()
+            summary: normalizeSummaryText(contentMatch[1]),
+            discussion: normalizeDiscussionText(discussionMatch[1])
         };
     }
 
@@ -871,16 +932,85 @@ export function parseSummaryResponse(content: string): { summary: string; discus
         // If there's substantial content after Content Summary, use it
         if (remaining.length > 50) {
             return {
-                summary: contentMatch[1].trim(),
-                discussion: remaining.replace(/<\/?[^>]+(>|$)/g, '').trim()
+                summary: normalizeSummaryText(contentMatch[1]),
+                discussion: normalizeDiscussionText(remaining.replace(/<\/?[^>]+(>|$)/g, '').trim())
             };
         }
     }
 
     return {
-        summary: contentMatch?.[1]?.trim() ?? "Summary unavailable.",
-        discussion: discussionMatch?.[1]?.trim() ?? "Discussion unavailable."
+        summary: contentMatch?.[1] ? normalizeSummaryText(contentMatch[1]) : "Summary unavailable.",
+        discussion: discussionMatch?.[1] ? normalizeDiscussionText(discussionMatch[1]) : "Discussion unavailable."
     };
+}
+
+function normalizeSummaryText(text: string): string {
+    return String(text || '').trim();
+}
+
+function normalizeDiscussionText(text: string): string {
+    let out = String(text || '').trim();
+    out = rewriteRoboticDiscussionLead(out);
+    return out;
+}
+
+function rewriteRoboticDiscussionLead(text: string): string {
+    let out = text.trim();
+
+    // Allow up to 2 adverbs between "discussion" and the verb.
+    const ADV = '(?:\\w+\\s+){0,2}';
+
+    const rules: Array<[RegExp, string]> = [
+        [/^the\s+hacker\s+news\s+discussion\s+centers\s+on\s+/i, 'Commenters focused on '],
+        [/^the\s+discussion\s+centers\s+on\s+/i, 'Commenters focused on '],
+        [/^the\s+hacker\s+news\s+discussion\s+centered\s+on\s+/i, 'Commenters focused on '],
+        [/^the\s+discussion\s+centered\s+on\s+/i, 'Commenters focused on '],
+        [/^the\s+hacker\s+news\s+discussion\s+centered\s+around\s+/i, 'Commenters focused on '],
+        [/^the\s+discussion\s+centered\s+around\s+/i, 'Commenters focused on '],
+        [/^the\s+hacker\s+news\s+discussion\s+revolves\s+around\s+/i, 'Commenters debated '],
+        [/^the\s+discussion\s+revolves\s+around\s+/i, 'Commenters debated '],
+        [/^the\s+hacker\s+news\s+discussion\s+revolved\s+around\s+/i, 'Commenters debated '],
+        [/^the\s+discussion\s+revolved\s+around\s+/i, 'Commenters debated '],
+        [/^the\s+hacker\s+news\s+discussion\s+highlights\s+/i, 'Commenters highlighted '],
+        [/^the\s+discussion\s+highlights\s+/i, 'Commenters highlighted '],
+        [/^the\s+hacker\s+news\s+discussion\s+highlighted\s+/i, 'Commenters highlighted '],
+        [/^the\s+discussion\s+highlighted\s+/i, 'Commenters highlighted '],
+        [/^the\s+hacker\s+news\s+discussion\s+dissected\s+/i, 'Commenters dissected '],
+        [/^the\s+discussion\s+dissected\s+/i, 'Commenters dissected '],
+        [/^the\s+hacker\s+news\s+discussion\s+is\s+about\s+/i, 'Commenters discussed '],
+        [/^the\s+discussion\s+is\s+about\s+/i, 'Commenters discussed '],
+        [/^the\s+hacker\s+news\s+discussion\s+focused\s+on\s+/i, 'Commenters focused on '],
+        [/^the\s+discussion\s+focused\s+on\s+/i, 'Commenters focused on '],
+
+        // Common generic openings
+        [/^the\s+hacker\s+news\s+discussion\s+reveals\s+/i, 'Commenters revealed '],
+        [/^the\s+discussion\s+reveals\s+/i, 'Commenters revealed '],
+        [/^the\s+hacker\s+news\s+discussion\s+shows\s+/i, 'Commenters showed '],
+        [/^the\s+discussion\s+shows\s+/i, 'Commenters showed '],
+        [/^the\s+hacker\s+news\s+discussion\s+discusses\s+/i, 'Commenters discussed '],
+        [/^the\s+discussion\s+discusses\s+/i, 'Commenters discussed '],
+        [new RegExp(`^the\\s+hacker\\s+news\\s+discussion\\s+${ADV}debated\\s+`, 'i'), 'Commenters debated '],
+        [new RegExp(`^the\\s+discussion\\s+${ADV}debated\\s+`, 'i'), 'Commenters debated '],
+        [new RegExp(`^the\\s+hacker\\s+news\\s+discussion\\s+${ADV}argued\\s+`, 'i'), 'Commenters argued '],
+        [new RegExp(`^the\\s+discussion\\s+${ADV}argued\\s+`, 'i'), 'Commenters argued '],
+        [new RegExp(`^the\\s+hacker\\s+news\\s+discussion\\s+${ADV}criticized\\s+`, 'i'), 'Commenters criticized '],
+        [new RegExp(`^the\\s+discussion\\s+${ADV}criticized\\s+`, 'i'), 'Commenters criticized '],
+        [new RegExp(`^the\\s+hacker\\s+news\\s+discussion\\s+${ADV}praised\\s+`, 'i'), 'Commenters praised '],
+        [new RegExp(`^the\\s+discussion\\s+${ADV}praised\\s+`, 'i'), 'Commenters praised '],
+        [new RegExp(`^the\\s+hacker\\s+news\\s+discussion\\s+${ADV}noted\\s+`, 'i'), 'Commenters noted '],
+        [new RegExp(`^the\\s+discussion\\s+${ADV}noted\\s+`, 'i'), 'Commenters noted ']
+    ];
+
+    for (const [pattern, replacement] of rules) {
+        if (pattern.test(out)) {
+            out = out.replace(pattern, replacement);
+            break;
+        }
+    }
+
+    // Guard against awkward results like "Commenters focused on ,".
+    out = out.replace(/\s+,/g, ',').trim();
+    return out;
 }
 
 // ============================================================================
@@ -1017,35 +1147,89 @@ export async function summarizeStory(
         applyThinkingMode(requestBody, config, Boolean(thinkingParams?.thinking));
 
         let content = "";
+        let finishReason: string | undefined;
         try {
             if (thinkingParams?.thinking) {
                 content = await fetchStreamCompletion(config.apiUrl, config.apiKey, requestBody, fetcher, {
                     stopAfter: ["</Content Summary>", "</Discussion Summary>"]
                 });
             } else {
-                content = await fetchCompletion(config.apiUrl, config.apiKey, requestBody, fetcher);
+                const meta = await fetchCompletionWithMeta(config.apiUrl, config.apiKey, requestBody, fetcher);
+                content = meta.content;
+                finishReason = meta.finishReason || meta.nativeFinishReason;
+
+                // Some OpenRouter upstreams return empty content with finish_reason=content_filter.
+                // Retry once with a fallback model to avoid publishing "Summary unavailable".
+                if (!content.trim() && isOpenRouterApi(config) && finishReason === 'content_filter') {
+                    const logInfo = logger?.info || console.log;
+                    if (config.model !== OPENROUTER_CONTENT_FILTER_FALLBACK_MODEL) {
+                        logInfo(
+                            `Content filtered for "${story.title}" (${story.objectID}) ` +
+                            `on ${config.model}; retrying with ${OPENROUTER_CONTENT_FILTER_FALLBACK_MODEL}...`
+                        );
+                        const retryBody = { ...requestBody, model: OPENROUTER_CONTENT_FILTER_FALLBACK_MODEL };
+                        const retryMeta = await fetchCompletionWithMeta(config.apiUrl, config.apiKey, retryBody, fetcher);
+                        content = retryMeta.content;
+                        finishReason = retryMeta.finishReason || retryMeta.nativeFinishReason;
+                    }
+                }
             }
         } catch (apiError: any) {
             const errorMessage = getErrorMessage(apiError);
             const providerLabel = `${config.provider ?? 'unknown'}:${config.model}`;
-            logError(`API error for "${story.title}" (${story.objectID}) [${providerLabel}]: ${errorMessage}`);
-            const errorSnippet = truncateText(errorMessage, 120);
-            return {
-                id: story.objectID,
-                title: story.title,
-                url: story.url || `https://news.ycombinator.com/item?id=${story.objectID}`,
-                points: story.points,
-                num_comments: story.num_comments,
-                summary: `API error: ${errorSnippet}`,
-                discussion_summary: `API error: ${errorSnippet}`,
-                postType
-            };
+
+            // Some OpenRouter upstreams error out on sensitive content (or return content_filter).
+            // Try a single alternate OpenRouter model before giving up.
+            if (isOpenRouterApi(config) && config.model !== OPENROUTER_CONTENT_FILTER_FALLBACK_MODEL) {
+                const isPossiblyFiltered =
+                    /content[_\s-]?filter/i.test(errorMessage) ||
+                    /\b451\b/.test(errorMessage) ||
+                    /provider returned error/i.test(errorMessage);
+
+                if (isPossiblyFiltered) {
+                    const logInfo = logger?.info || console.log;
+                    logInfo(
+                        `OpenRouter error for "${story.title}" (${story.objectID}) on ${config.model}; ` +
+                        `retrying with ${OPENROUTER_CONTENT_FILTER_FALLBACK_MODEL}...`
+                    );
+                    try {
+                        const retryBody = { ...requestBody, model: OPENROUTER_CONTENT_FILTER_FALLBACK_MODEL };
+                        const retryMeta = await fetchCompletionWithMeta(config.apiUrl, config.apiKey, retryBody, fetcher);
+                        content = retryMeta.content;
+                        finishReason = retryMeta.finishReason || retryMeta.nativeFinishReason;
+
+                        // Continue through normal parsing path
+                    } catch (retryError: any) {
+                        const retryMessage = getErrorMessage(retryError);
+                        logError(
+                            `API error for "${story.title}" (${story.objectID}) ` +
+                            `[openrouter:${OPENROUTER_CONTENT_FILTER_FALLBACK_MODEL}]: ${retryMessage}`
+                        );
+                    }
+                }
+            }
+
+            if (!content.trim()) {
+                logError(`API error for "${story.title}" (${story.objectID}) [${providerLabel}]: ${errorMessage}`);
+                const errorSnippet = truncateText(errorMessage, 120);
+                return {
+                    id: story.objectID,
+                    title: story.title,
+                    url: story.url || `https://news.ycombinator.com/item?id=${story.objectID}`,
+                    points: story.points,
+                    num_comments: story.num_comments,
+                    summary: `API error: ${errorSnippet}`,
+                    discussion_summary: `API error: ${errorSnippet}`,
+                    postType
+                };
+            }
         }
 
         // Log if content is empty (might be thinking only?)
         if (!content) {
             const providerLabel = `${config.provider ?? 'unknown'}:${config.model}`;
-            logError(`Empty response for "${story.title}" (${story.objectID}) [${providerLabel}]`);
+            const reason = finishReason ? ` finish_reason=${finishReason}` : '';
+            logError(`Empty response for "${story.title}" (${story.objectID}) [${providerLabel}]${reason}`);
         }
 
         const parsed = parseSummaryResponse(content);
