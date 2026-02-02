@@ -1093,9 +1093,9 @@ export async function processStoriesWithRateLimit(
     }
 ): Promise<ProcessedStory[]> {
     const {
-        batchSize = 3,
-        storyDelayMs = 2000,
-        batchDelayMs = 10000,
+        batchSize = 5,
+        storyDelayMs = 1000,
+        batchDelayMs = 5000,
         indent = '',
         fetcher,
         logger

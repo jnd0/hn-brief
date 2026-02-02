@@ -197,8 +197,8 @@ async function processDate(date: string | null, mode: string): Promise<{ date: s
 
   // Wait before generating digest to avoid rate limits
   if ((mode === 'all' || mode === 'digest') && processedStories.length > 0) {
-    console.log(`   ⏳ Waiting 10s before generating digest...`);
-    await new Promise(r => setTimeout(r, 10000));
+    console.log(`   ⏳ Waiting 5s before generating digest...`);
+    await new Promise(r => setTimeout(r, 5000));
     
     // Generate Digest Mode
     const digestContent = await generateDigest(processedStories, llmConfig);

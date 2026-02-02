@@ -106,8 +106,8 @@ async function generateDailySummary(env: Env) {
     const articleMd = formatArticleMarkdown(processedStories, date);
     
     // Wait before generating digest to avoid rate limits
-    console.log(`⏳ Waiting 10s before generating digest...`);
-    await new Promise(r => setTimeout(r, 10000));
+    console.log(`⏳ Waiting 5s before generating digest...`);
+    await new Promise(r => setTimeout(r, 5000));
     
     const digestContent = await generateDigest(processedStories, llmConfig);
     const digestMd = formatDigestMarkdown(digestContent, date, processedStories.length);
