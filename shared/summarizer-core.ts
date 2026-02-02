@@ -185,9 +185,8 @@ function applyThinkingMode(requestBody: Record<string, unknown>, config: LLMConf
     }
 }
 
-function createCebrasConfig(env: LLMEnv): { config: LLMConfig; provider: string } | null {
+function createCebrasConfig(env: LLMEnv, thinking: boolean | undefined): { config: LLMConfig; provider: string } | null {
     if (!env.CEBRAS_API_KEY) return null;
-    const thinking = parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
     return {
         config: {
             apiKey: env.CEBRAS_API_KEY,
@@ -200,9 +199,8 @@ function createCebrasConfig(env: LLMEnv): { config: LLMConfig; provider: string 
     };
 }
 
-function createNvidiaConfig(env: LLMEnv): { config: LLMConfig; provider: string } | null {
+function createNvidiaConfig(env: LLMEnv, thinking: boolean | undefined): { config: LLMConfig; provider: string } | null {
     if (!env.NVIDIA_API_KEY) return null;
-    const thinking = parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
     return {
         config: {
             apiKey: env.NVIDIA_API_KEY,
@@ -215,9 +213,8 @@ function createNvidiaConfig(env: LLMEnv): { config: LLMConfig; provider: string 
     };
 }
 
-function createOpenRouterConfig(env: LLMEnv): { config: LLMConfig; provider: string } | null {
+function createOpenRouterConfig(env: LLMEnv, thinking: boolean | undefined): { config: LLMConfig; provider: string } | null {
     if (!env.OPENROUTER_API_KEY) return null;
-    const thinking = parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
     return {
         config: {
             apiKey: env.OPENROUTER_API_KEY,
@@ -401,20 +398,22 @@ async function fetchStreamCompletion(
  * @throws Error if no API key is configured
  */
 export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: string } {
+    const thinking = parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
+
     // Priority 1: OpenRouter (preferred)
-    const openrouter = createOpenRouterConfig(env);
+    const openrouter = createOpenRouterConfig(env, thinking);
     if (openrouter) return openrouter;
 
     // Priority 2: Cebras
-    const cebras = createCebrasConfig(env);
+    const cebras = createCebrasConfig(env, thinking);
     if (cebras) return cebras;
 
     // Priority 3: Nvidia NIM
-    const nvidia = createNvidiaConfig(env);
+    const nvidia = createNvidiaConfig(env, thinking);
     if (nvidia) return nvidia;
 
     // Priority 4: Xiaomi MiMo
-    const xiaomi = createXiaomiConfig(env);
+    const xiaomi = createXiaomiConfig(env, thinking);
     if (xiaomi) {
         return xiaomi;
     }
@@ -445,14 +444,16 @@ export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: str
 
 export function createXiaomiConfig(env: LLMEnv): { config: LLMConfig; provider: string } | null {
     if (!env.XIAOMI_API_KEY) return null;
-    const thinking = parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
+    const resolvedThinking = arguments.length >= 2
+        ? (arguments[1] as boolean | undefined)
+        : parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
     return {
         config: {
             apiKey: env.XIAOMI_API_KEY,
             apiUrl: env.XIAOMI_API_URL || DEFAULT_XIAOMI_URL,
             model: env.XIAOMI_MODEL || DEFAULT_XIAOMI_MODEL,
             provider: 'xiaomi',
-            thinking
+            thinking: resolvedThinking
         },
         provider: 'Xiaomi MiMo'
     };
@@ -918,18 +919,20 @@ export async function resolveLLMConfigWithFallback(
 ): Promise<{ config: LLMConfig; provider: string; usedFallback: boolean }>{
     // Try providers in order: OpenRouter -> Cebras -> Nvidia -> Xiaomi
     const providers: { config: LLMConfig; provider: string }[] = [];
+
+    const thinking = parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
     
     // Build list of available providers
-    const openrouter = createOpenRouterConfig(env);
+    const openrouter = createOpenRouterConfig(env, thinking);
     if (openrouter) providers.push(openrouter);
 
-    const cebras = createCebrasConfig(env);
+    const cebras = createCebrasConfig(env, thinking);
     if (cebras) providers.push(cebras);
 
-    const nvidia = createNvidiaConfig(env);
+    const nvidia = createNvidiaConfig(env, thinking);
     if (nvidia) providers.push(nvidia);
 
-    const xiaomi = createXiaomiConfig(env);
+    const xiaomi = createXiaomiConfig(env, thinking);
     if (xiaomi) providers.push(xiaomi);
     
     if (providers.length === 0) {
