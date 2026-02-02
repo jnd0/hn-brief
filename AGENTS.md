@@ -60,12 +60,13 @@ hn-brief/
 ## Environment Variables
 
 Required for LLM summarization:
-- `CEBRAS_API_KEY` - Primary LLM provider (default model: `qwen-3-235b-a22b-instruct-2507`)
+- `OPENROUTER_API_KEY` - Preferred LLM provider (default model: `stepfun/step-3.5-flash:free`)
+- `OPENROUTER_MODEL` - Override OpenRouter model
+- `CEBRAS_API_KEY` - Fallback LLM provider (default model: `qwen-3-235b-a22b-instruct-2507`)
 - `CEBRAS_API_URL` - Override Cebras API URL
 - `CEBRAS_API_MODEL` - Override Cebras model
 - `NVIDIA_API_KEY` - Fallback LLM provider (default model: `moonshotai/kimi-k2.5`)
 - `XIAOMI_API_KEY` - Fallback LLM provider (default model: `mimo-v2-flash`)
-- `OPENROUTER_API_KEY` - Last-resort LLM provider
 - `LLM_MODEL` - Legacy model override (OpenRouter/Nvidia/OpenAI-compatible)
 - `LLM_THINKING_FORCE` - Force thinking mode for providers that support it (`true`/`false`)
 - `LLM_THINKING` - Alias for `LLM_THINKING_FORCE`

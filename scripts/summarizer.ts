@@ -35,7 +35,7 @@ const { config: llmConfig, provider } = await resolveLLMConfigWithFallback({
   XIAOMI_API_KEY: process.env.XIAOMI_API_KEY,
   XIAOMI_API_URL: process.env.XIAOMI_API_URL,
   XIAOMI_MODEL: process.env.XIAOMI_MODEL,
-  // Last resort: OpenRouter
+  // Preferred: OpenRouter
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
   OPENROUTER_MODEL: process.env.OPENROUTER_MODEL,
   // Alternative providers

@@ -9,7 +9,7 @@ Too busy to scroll through Hacker News every day? HN-Brief automatically fetches
 ## How It Works
 
 1. **Fetch** — A Cloudflare Worker runs every 2 hours, pulling the top stories from the [HN Algolia API](https://hn.algolia.com/api).
-2. **Summarize** — Each story + its comments are sent to an LLM (via Cebras, Nvidia NIM, Xiaomi MiMo, or [OpenRouter](https://openrouter.ai) as last resort).
+2. **Summarize** — Each story + its comments are sent to an LLM (via [OpenRouter](https://openrouter.ai) by default, with Cebras/Nvidia/Xiaomi as fallbacks).
 3. **Digest** — All summaries are combined into a single, flowing narrative for quick reading.
 4. **Publish** — The Worker commits the markdown files directly to GitHub, triggering a Cloudflare Pages redeploy.
 
@@ -90,7 +90,9 @@ bun run summarize -- -d 2025-12-25 -g
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `CEBRAS_API_KEY` | Cebras API key (default provider) | Yes (or one of below) |
+| `OPENROUTER_API_KEY` | OpenRouter API key (preferred) | Yes (or one of below) |
+| `OPENROUTER_MODEL` | OpenRouter model override | No |
+| `CEBRAS_API_KEY` | Cebras API key (fallback) | Yes (or one of below) |
 | `CEBRAS_API_URL` | Cebras API URL override | No |
 | `CEBRAS_API_MODEL` | Cebras model (default: `qwen-3-235b-a22b-instruct-2507`) | No |
 | `NVIDIA_API_KEY` | Nvidia NIM API key (fallback) | Yes (or one of below) |
@@ -98,8 +100,6 @@ bun run summarize -- -d 2025-12-25 -g
 | `XIAOMI_API_KEY` | Xiaomi MiMo API key (fallback) | Yes (or one of below) |
 | `XIAOMI_API_URL` | Xiaomi API URL override | No |
 | `XIAOMI_MODEL` | Xiaomi model override (default: `mimo-v2-flash`) | No |
-| `OPENROUTER_API_KEY` | OpenRouter API key (last resort) | Yes (or one of below) |
-| `OPENROUTER_MODEL` | OpenRouter model override | No |
 | `OPENAI_API_KEY` | OpenAI-compatible API key | Yes (or another key) |
 | `LLM_MODEL` | Legacy model override for OpenRouter/Nvidia/OpenAI-compatible | No |
 | `LLM_API_URL` | Override LLM API URL (OpenRouter/Nvidia/OpenAI-compatible) | No |

@@ -89,11 +89,11 @@ export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promis
 export const ALGOLIA_API = "https://hn.algolia.com/api/v1";
 
 // LLM Provider Defaults
-// Priority: Cebras > Nvidia NIM > Xiaomi MiMo > OpenRouter > OpenAI-compatible
+// Priority: OpenRouter > Cebras > Nvidia NIM > Xiaomi MiMo > OpenAI-compatible
 const DEFAULT_CEBRAS_URL = "https://api.cerebras.ai/v1/chat/completions";
 const DEFAULT_CEBRAS_MODEL = "qwen-3-235b-a22b-instruct-2507";
 const DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_OPENROUTER_MODEL = "arcee-ai/trinity-large-preview:free";
+const DEFAULT_OPENROUTER_MODEL = "stepfun/step-3.5-flash:free";
 const DEFAULT_NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
 const DEFAULT_NVIDIA_MODEL = "moonshotai/kimi-k2.5";
 const DEFAULT_XIAOMI_URL = "https://api.xiaomimimo.com/v1/chat/completions";
@@ -124,7 +124,7 @@ export interface LLMEnv {
     XIAOMI_API_KEY?: string;
     XIAOMI_API_URL?: string;
     XIAOMI_MODEL?: string;
-    // Last resort: OpenRouter
+    // Preferred: OpenRouter
     OPENROUTER_API_KEY?: string;
     OPENROUTER_MODEL?: string;
     // Alternative: OpenAI-compatible
@@ -180,9 +180,54 @@ function applyThinkingMode(requestBody: Record<string, unknown>, config: LLMConf
         // Nvidia NIM format
         requestBody.thinking = enabled ? { type: "enabled" } : { type: "disabled" };
     } else if (isOpenRouterApi(config)) {
-        // OpenRouter format (arcee-ai/trinity-large-preview:free)
+        // OpenRouter format
         requestBody.reasoning = { enabled };
     }
+}
+
+function createCebrasConfig(env: LLMEnv): { config: LLMConfig; provider: string } | null {
+    if (!env.CEBRAS_API_KEY) return null;
+    const thinking = parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
+    return {
+        config: {
+            apiKey: env.CEBRAS_API_KEY,
+            apiUrl: env.CEBRAS_API_URL || DEFAULT_CEBRAS_URL,
+            model: env.CEBRAS_API_MODEL || DEFAULT_CEBRAS_MODEL,
+            provider: 'cebras',
+            thinking
+        },
+        provider: 'Cebras'
+    };
+}
+
+function createNvidiaConfig(env: LLMEnv): { config: LLMConfig; provider: string } | null {
+    if (!env.NVIDIA_API_KEY) return null;
+    const thinking = parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
+    return {
+        config: {
+            apiKey: env.NVIDIA_API_KEY,
+            apiUrl: env.LLM_API_URL || DEFAULT_NVIDIA_URL,
+            model: env.NVIDIA_MODEL || env.LLM_MODEL || DEFAULT_NVIDIA_MODEL,
+            provider: 'nvidia',
+            thinking
+        },
+        provider: 'Nvidia NIM'
+    };
+}
+
+function createOpenRouterConfig(env: LLMEnv): { config: LLMConfig; provider: string } | null {
+    if (!env.OPENROUTER_API_KEY) return null;
+    const thinking = parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
+    return {
+        config: {
+            apiKey: env.OPENROUTER_API_KEY,
+            apiUrl: env.LLM_API_URL || DEFAULT_OPENROUTER_URL,
+            model: env.OPENROUTER_MODEL || env.LLM_MODEL || DEFAULT_OPENROUTER_MODEL,
+            provider: 'openrouter',
+            thinking
+        },
+        provider: 'OpenRouter'
+    };
 }
 
 function applyMaxTokens(requestBody: Record<string, unknown>, config: LLMConfig, maxTokens: number) {
@@ -350,60 +395,28 @@ async function fetchStreamCompletion(
 
 /**
  * Create LLM config from environment variables.
- * Priority: Cebras > Nvidia NIM > Xiaomi MiMo > OpenRouter > OpenAI-compatible (legacy, requires explicit config)
+ * Priority: OpenRouter > Cebras > Nvidia NIM > Xiaomi MiMo > OpenAI-compatible (legacy, requires explicit config)
  * 
  * @returns LLM config and provider name for logging
  * @throws Error if no API key is configured
  */
 export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: string } {
-    const thinking = parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
-    
-    // Priority 1: Cebras (primary provider)
-    if (env.CEBRAS_API_KEY) {
-        return {
-            config: {
-                apiKey: env.CEBRAS_API_KEY,
-                apiUrl: env.CEBRAS_API_URL || DEFAULT_CEBRAS_URL,
-                model: env.CEBRAS_API_MODEL || DEFAULT_CEBRAS_MODEL,
-                provider: 'cebras',
-                thinking
-            },
-            provider: 'Cebras'
-        };
-    }
+    // Priority 1: OpenRouter (preferred)
+    const openrouter = createOpenRouterConfig(env);
+    if (openrouter) return openrouter;
 
-    // Priority 2: Nvidia NIM (fallback)
-    if (env.NVIDIA_API_KEY) {
-        return {
-            config: {
-                apiKey: env.NVIDIA_API_KEY,
-                apiUrl: env.LLM_API_URL || DEFAULT_NVIDIA_URL,
-                model: env.NVIDIA_MODEL || env.LLM_MODEL || DEFAULT_NVIDIA_MODEL,
-                provider: 'nvidia',
-                thinking
-            },
-            provider: 'Nvidia NIM'
-        };
-    }
+    // Priority 2: Cebras
+    const cebras = createCebrasConfig(env);
+    if (cebras) return cebras;
 
-    // Priority 3: Xiaomi MiMo (fallback)
+    // Priority 3: Nvidia NIM
+    const nvidia = createNvidiaConfig(env);
+    if (nvidia) return nvidia;
+
+    // Priority 4: Xiaomi MiMo
     const xiaomi = createXiaomiConfig(env);
     if (xiaomi) {
         return xiaomi;
-    }
-
-    // Priority 4: OpenRouter (last resort)
-    if (env.OPENROUTER_API_KEY) {
-        return {
-            config: {
-                apiKey: env.OPENROUTER_API_KEY,
-                apiUrl: env.LLM_API_URL || DEFAULT_OPENROUTER_URL,
-                model: env.OPENROUTER_MODEL || env.LLM_MODEL || DEFAULT_OPENROUTER_MODEL,
-                provider: 'openrouter',
-                thinking
-            },
-            provider: 'OpenRouter'
-        };
     }
 
     // Priority 5: OpenAI-compatible (requires explicit URL and model)
@@ -903,30 +916,21 @@ export async function resolveLLMConfigWithFallback(
     logger: LLMLogger = { info: () => {}, error: () => {} },
     fetcher?: FetchLike
 ): Promise<{ config: LLMConfig; provider: string; usedFallback: boolean }>{
-    // Try providers in order: Cebras -> Nvidia -> Xiaomi -> OpenRouter
+    // Try providers in order: OpenRouter -> Cebras -> Nvidia -> Xiaomi
     const providers: { config: LLMConfig; provider: string }[] = [];
     
     // Build list of available providers
-    if (env.CEBRAS_API_KEY) {
-        providers.push(createLLMConfig(env));
-    }
-    if (env.NVIDIA_API_KEY) {
-        const nvidia = createLLMConfig({ ...env, CEBRAS_API_KEY: undefined });
-        providers.push(nvidia);
-    }
+    const openrouter = createOpenRouterConfig(env);
+    if (openrouter) providers.push(openrouter);
+
+    const cebras = createCebrasConfig(env);
+    if (cebras) providers.push(cebras);
+
+    const nvidia = createNvidiaConfig(env);
+    if (nvidia) providers.push(nvidia);
+
     const xiaomi = createXiaomiConfig(env);
-    if (xiaomi) {
-        providers.push(xiaomi);
-    }
-    if (env.OPENROUTER_API_KEY) {
-        const openrouter = createLLMConfig({ 
-            ...env, 
-            CEBRAS_API_KEY: undefined, 
-            NVIDIA_API_KEY: undefined,
-            XIAOMI_API_KEY: undefined 
-        });
-        providers.push(openrouter);
-    }
+    if (xiaomi) providers.push(xiaomi);
     
     if (providers.length === 0) {
         throw new Error('No LLM API key found. Set CEBRAS_API_KEY, NVIDIA_API_KEY, XIAOMI_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.');
