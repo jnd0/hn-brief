@@ -176,13 +176,27 @@ function supportsThinkingConfig(config: LLMConfig): boolean {
     return isNvidiaApi(config) || isOpenRouterApi(config);
 }
 
+function shouldForceOpenRouterReasoning(config: LLMConfig): boolean {
+    if (!isOpenRouterApi(config)) return false;
+
+    // Some OpenRouter models/providers require reasoning to be enabled and will error
+    // if it is explicitly disabled.
+    return config.model.startsWith('stepfun/');
+}
+
 function applyThinkingMode(requestBody: Record<string, unknown>, config: LLMConfig, enabled: boolean) {
     if (isNvidiaApi(config)) {
         // Nvidia NIM format
         requestBody.thinking = enabled ? { type: "enabled" } : { type: "disabled" };
     } else if (isOpenRouterApi(config)) {
         // OpenRouter format
-        requestBody.reasoning = { enabled };
+        if (enabled || shouldForceOpenRouterReasoning(config)) {
+            requestBody.reasoning = { enabled: true };
+        } else {
+            // Some providers error if reasoning is explicitly disabled.
+            // Omitting is safer than sending { enabled: false }.
+            delete (requestBody as any).reasoning;
+        }
     }
 }
 
@@ -890,7 +904,7 @@ export function buildDigestPrompt(stories: ProcessedStory[]): string {
 Here are today's top stories with their individual summaries:
 ${storiesContext}
 
-Write a cohesive, engaging digest that is at least 14 paragraphs (2-4 sentences each) and roughly 1200-2200 words:
+Write a cohesive, engaging digest that is at least 14 paragraphs and roughly 1200-2200 words (vary paragraph length as needed):
 1. Opens with the most significant/interesting story of the day (jump straight into it)
 2. Groups related topics together
 3. Highlights interesting patterns or themes
