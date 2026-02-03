@@ -1,6 +1,6 @@
 # HN Daily Digest - 2026-02-03
 
-Digest generation failed (empty content).
+Digest generation failed due to API error.
 
 ---
 
