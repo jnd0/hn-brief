@@ -515,10 +515,10 @@ export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: str
     );
 }
 
-export function createXiaomiConfig(env: LLMEnv): { config: LLMConfig; provider: string } | null {
+export function createXiaomiConfig(env: LLMEnv, thinking?: boolean): { config: LLMConfig; provider: string } | null {
     if (!env.XIAOMI_API_KEY) return null;
-    const resolvedThinking = arguments.length >= 2
-        ? (arguments[1] as boolean | undefined)
+    const resolvedThinking = typeof thinking === 'boolean'
+        ? thinking
         : parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
     return {
         config: {
@@ -1088,8 +1088,10 @@ export async function resolveLLMConfigWithFallback(
         const current = providers[i]!;
         logger.info(`Trying LLM: ${current.provider} with model: ${current.config.model}`);
         
-        // Run health check for Cebras and Nvidia
-        if (current.provider === 'Cebras' || current.provider === 'Nvidia NIM') {
+        // Run a small health check before selecting a provider.
+        // This helps avoid burning an entire run on OpenRouter quota errors (e.g. 429 free-models-per-day)
+        // and catches obvious misconfiguration early.
+        if (current.provider === 'OpenRouter' || current.provider === 'Cebras' || current.provider === 'Nvidia NIM') {
             logger.info(`Running ${current.provider} health check...`);
             const probe = await probeLLM(current.config, fetcher);
             if (!probe.ok) {
