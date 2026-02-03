@@ -206,6 +206,33 @@ describe("LLM Configuration", () => {
     expect(result.usedFallback).toBe(true);
     expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("Cebras health check failed"));
   });
+
+  test("resolveLLMConfigWithFallback falls back when OpenRouter quota is exceeded", async () => {
+    const env: LLMEnv = {
+      OPENROUTER_API_KEY: "openrouter-key",
+      CEBRAS_API_KEY: "cebras-key"
+    };
+
+    const mockFetcher = mock((input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("openrouter.ai")) {
+        return Promise.resolve(new Response("Rate limit exceeded: free-models-per-day", { status: 429 }));
+      }
+      if (url.includes("cerebras")) {
+        return Promise.resolve(new Response(JSON.stringify({
+          choices: [{ message: { content: "OK" } }]
+        }), { status: 200 }));
+      }
+      return Promise.reject("Unknown URL");
+    });
+
+    const logger = { info: mock(() => {}), error: mock(() => {}) };
+    const result = await resolveLLMConfigWithFallback(env, logger, mockFetcher);
+
+    expect(result.provider).toBe("Cebras");
+    expect(result.usedFallback).toBe(true);
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("OpenRouter health check failed"));
+  });
 });
 
 // Helper for valid summary response
