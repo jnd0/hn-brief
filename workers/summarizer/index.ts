@@ -14,8 +14,25 @@ import {
     parseDateComponents,
     getPostTypeLabel,
     resolveLLMConfigWithFallback,
-    createLLMConfig
+    createLLMConfig,
+    isStorySummaryFailure,
+    isDigestFailureText,
+    wouldWorsenArticleMarkdown
 } from '../../shared/summarizer-core';
+
+const MAX_STORY_FAILURES_TO_PUBLISH = 3;
+
+type CommitOptions = {
+    skipIfWorse?: (nextContent: string, existingContent: string) => string | null;
+};
+
+type CommitResult = {
+    action: 'created' | 'updated' | 'unchanged';
+    sha?: string;
+    reason?: 'identical' | 'worse';
+};
+
+// failure detection helpers live in shared/summarizer-core.ts
 
 // ============================================================================
 // Environment Interface
@@ -102,6 +119,15 @@ async function generateDailySummary(env: Env) {
     // 3. Process LLM calls with rate limiting using shared function
     const processedStories = await processStoriesWithRateLimit(storyDetails, llmConfig);
 
+    const storyFailureCount = processedStories.filter(isStorySummaryFailure).length;
+    if (storyFailureCount > MAX_STORY_FAILURES_TO_PUBLISH) {
+        console.error(
+            `⚠️ Too many story summary failures for ${date} (${storyFailureCount}/${processedStories.length}). ` +
+            `Skipping GitHub updates to avoid overwriting good summaries.`
+        );
+        return;
+    }
+
     // 4. Generate Markdown using shared formatters
     const articleMd = formatArticleMarkdown(processedStories, date);
     
@@ -111,15 +137,44 @@ async function generateDailySummary(env: Env) {
     
     const digestContent = await generateDigest(processedStories, llmConfig);
     const digestMd = formatDigestMarkdown(digestContent, date, processedStories.length);
+    const digestSucceeded = !isDigestFailureText(digestContent);
 
     // 5. Commit both files to GitHub
     const folderPath = `summaries/${year}/${month}`;
     try {
-        await commitToGitHub(env, `${folderPath}/${day}.md`, articleMd, `Add articles for ${date}`);
-        await commitToGitHub(env, `${folderPath}/${day}-digest.md`, digestMd, `Add digest for ${date}`);
+        const articleCommit = await commitToGitHub(
+            env,
+            `${folderPath}/${day}.md`,
+            articleMd,
+            `Add articles for ${date}`,
+            undefined,
+            {
+                skipIfWorse: (next, prev) => {
+                    return wouldWorsenArticleMarkdown(next, prev);
+                }
+            }
+        );
+
+        let digestPublished = false;
+        if (articleCommit.action === 'unchanged' && articleCommit.reason === 'worse') {
+            console.error(`⚠️ Articles would be worse for ${date}; skipping digest and archive update.`);
+            return;
+        }
+
+        if (digestSucceeded) {
+            const digestCommit = await commitToGitHub(
+                env,
+                `${folderPath}/${day}-digest.md`,
+                digestMd,
+                `Add digest for ${date}`
+            );
+            digestPublished = digestCommit.action !== 'unchanged' || digestCommit.reason === 'identical';
+        } else {
+            console.error(`⚠️ Digest generation failed for ${date}; leaving existing digest intact.`);
+        }
 
         // 6. Update Archive Index
-        await updateArchive(env, date, processedStories.length);
+        await updateArchive(env, date, processedStories.length, digestPublished);
 
         console.log(`✅ Completed summary for ${date}`);
     } catch (error) {
@@ -151,7 +206,14 @@ function utf8_to_b64(str: string): string {
     );
 }
 
-async function commitToGitHub(env: Env, path: string, content: string, message: string, shaOverride?: string): Promise<{ action: 'created' | 'updated' | 'unchanged'; sha?: string }> {
+async function commitToGitHub(
+    env: Env,
+    path: string,
+    content: string,
+    message: string,
+    shaOverride?: string,
+    options?: CommitOptions
+): Promise<CommitResult> {
     const url = `https://api.github.com/repos/${env.REPO_OWNER}/${env.REPO_NAME}/contents/${path}`;
 
     // Get existing file info if it exists
@@ -174,10 +236,19 @@ async function commitToGitHub(env: Env, path: string, content: string, message: 
         }
     }
 
+    // Optional: avoid overwriting with worse content
+    if (existingContent !== undefined) {
+        const reason = options?.skipIfWorse?.(content, existingContent);
+        if (reason) {
+            console.log(`⏭️ Skipping ${path} - ${reason}`);
+            return { action: 'unchanged', sha: existingSha, reason: 'worse' };
+        }
+    }
+
     // Skip if content is identical (avoid empty commits)
     if (existingContent !== undefined && existingContent === content) {
         console.log(`⏭️ Skipping ${path} - content unchanged`);
-        return { action: 'unchanged' };
+        return { action: 'unchanged', sha: existingSha, reason: 'identical' };
     }
 
     const res = await fetch(url, {
@@ -203,7 +274,7 @@ async function commitToGitHub(env: Env, path: string, content: string, message: 
     return { action, sha: result.content?.sha };
 }
 
-async function updateArchive(env: Env, date: string, storyCount: number) {
+async function updateArchive(env: Env, date: string, storyCount: number, digestSucceeded: boolean) {
     const archivePath = "summaries/archive.json";
     let archive: any[] = [];
     let currentSha: string | undefined;
@@ -223,7 +294,9 @@ async function updateArchive(env: Env, date: string, storyCount: number) {
     );
 
     const existingIndex = archive.findIndex((entry: any) => entry.date === date);
-    const newEntry = { date, hasDigest: true, storyCount };
+    const existing = existingIndex === -1 ? null : archive[existingIndex];
+    const hasDigest = digestSucceeded || Boolean(existing?.hasDigest);
+    const newEntry = { date, hasDigest, storyCount };
 
     if (existingIndex === -1) {
         archive.push(newEntry);
@@ -236,3 +309,7 @@ async function updateArchive(env: Env, date: string, storyCount: number) {
 
     await commitToGitHub(env, archivePath, JSON.stringify(archive, null, 2), `Update archive for ${date}`, currentSha);
 }
+
+export const __test__ = {
+    commitToGitHub
+};
