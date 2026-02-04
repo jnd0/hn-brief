@@ -53,7 +53,7 @@ function countFailuresInArticleMarkdown(md: string): number {
     // We count failure blocks (not stories) so the metric stays stable even if a single story
     // has both an article and discussion failure.
     const matches = md.match(
-        /> \*\*[^*]+\*\*:\s*(?:API error:|Error generating summary\.?|Summary unavailable\.?)/gi
+        /> \*\*[^*]+:\*\*\s*(?:API error:|Error generating summary\.?|Summary unavailable\.?)/gi
     );
     return matches ? matches.length : 0;
 }
@@ -337,3 +337,10 @@ async function updateArchive(env: Env, date: string, storyCount: number, digestS
 
     await commitToGitHub(env, archivePath, JSON.stringify(archive, null, 2), `Update archive for ${date}`, currentSha);
 }
+
+export const __test__ = {
+    isStorySummaryFailure,
+    isDigestFailure,
+    countFailuresInArticleMarkdown,
+    commitToGitHub
+};

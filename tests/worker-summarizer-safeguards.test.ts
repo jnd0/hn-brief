@@ -1,0 +1,185 @@
+import { describe, expect, test } from "bun:test";
+
+import { __test__ } from "../workers/summarizer/index";
+
+describe("workers/summarizer safeguards", () => {
+  test("isStorySummaryFailure detects common failure strings", () => {
+    expect(
+      __test__.isStorySummaryFailure({
+        summary: "API error: API Error 524",
+        discussion_summary: "ok"
+      } as any)
+    ).toBe(true);
+
+    expect(
+      __test__.isStorySummaryFailure({
+        summary: "Summary unavailable.",
+        discussion_summary: "ok"
+      } as any)
+    ).toBe(true);
+
+    expect(
+      __test__.isStorySummaryFailure({
+        summary: "Error generating summary.",
+        discussion_summary: "ok"
+      } as any)
+    ).toBe(true);
+
+    expect(
+      __test__.isStorySummaryFailure({
+        summary: "All good",
+        discussion_summary: "All good"
+      } as any)
+    ).toBe(false);
+  });
+
+  test("countFailuresInArticleMarkdown counts failure blocks", () => {
+    const md = [
+      "> **Article:** API error: API Error 524",
+      "> **Discussion:** ok",
+      "",
+      "> **Article:** Summary unavailable.",
+      "> **Discussion:** Error generating summary.",
+      "",
+      "> **Discussion:** API error: API Error 400"
+    ].join("\n");
+
+    expect(__test__.countFailuresInArticleMarkdown(md)).toBe(4);
+  });
+
+  test("isDigestFailure detects digest failure text", () => {
+    expect(__test__.isDigestFailure("Digest generation failed due to API error.")).toBe(true);
+    expect(__test__.isDigestFailure("Digest generation failed (empty content).")).toBe(true);
+    expect(__test__.isDigestFailure("All good")).toBe(false);
+  });
+
+  test("commitToGitHub skips when skipIfWorse triggers", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; method: string }> = [];
+    try {
+      globalThis.fetch = (async (url: any, init?: any) => {
+        const method = (init?.method || "GET") as string;
+        calls.push({ url: String(url), method });
+
+        if (method === "GET") {
+          const body = {
+            sha: "sha-prev",
+            content: btoa("prev")
+          };
+          return new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+
+        throw new Error("PUT should not be called when skipping as worse");
+      }) as any;
+
+      const res = await __test__.commitToGitHub(
+        {
+          GITHUB_TOKEN: "x",
+          REPO_OWNER: "o",
+          REPO_NAME: "r"
+        } as any,
+        "summaries/2026/02/04.md",
+        "next",
+        "msg",
+        undefined,
+        {
+          skipIfWorse: () => "worse"
+        }
+      );
+
+      expect(res.action).toBe("unchanged");
+      expect(res.reason).toBe("worse");
+      expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("commitToGitHub skips when content identical", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; method: string }> = [];
+    try {
+      globalThis.fetch = (async (url: any, init?: any) => {
+        const method = (init?.method || "GET") as string;
+        calls.push({ url: String(url), method });
+
+        if (method === "GET") {
+          const body = {
+            sha: "sha-prev",
+            content: btoa("same")
+          };
+          return new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+
+        throw new Error("PUT should not be called when content is identical");
+      }) as any;
+
+      const res = await __test__.commitToGitHub(
+        {
+          GITHUB_TOKEN: "x",
+          REPO_OWNER: "o",
+          REPO_NAME: "r"
+        } as any,
+        "summaries/2026/02/04.md",
+        "same",
+        "msg"
+      );
+
+      expect(res.action).toBe("unchanged");
+      expect(res.reason).toBe("identical");
+      expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("commitToGitHub PUTs when creating file", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; method: string }> = [];
+    try {
+      globalThis.fetch = (async (url: any, init?: any) => {
+        const method = (init?.method || "GET") as string;
+        calls.push({ url: String(url), method });
+
+        if (method === "GET") {
+          return new Response("not found", { status: 404 });
+        }
+
+        if (method === "PUT") {
+          const body = {
+            commit: { sha: "sha-commit" },
+            content: { sha: "sha-content" }
+          };
+          return new Response(JSON.stringify(body), {
+            status: 201,
+            headers: { "content-type": "application/json" }
+          });
+        }
+
+        throw new Error(`unexpected method: ${method}`);
+      }) as any;
+
+      const res = await __test__.commitToGitHub(
+        {
+          GITHUB_TOKEN: "x",
+          REPO_OWNER: "o",
+          REPO_NAME: "r"
+        } as any,
+        "summaries/2026/02/04.md",
+        "new",
+        "msg"
+      );
+
+      expect(res.action).toBe("created");
+      expect(calls.some((c) => c.method === "PUT")).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
