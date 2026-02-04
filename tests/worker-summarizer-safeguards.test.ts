@@ -1,32 +1,38 @@
 import { describe, expect, test } from "bun:test";
 
+import {
+  countFailuresInArticleMarkdown,
+  isDigestFailureText,
+  isStorySummaryFailure
+} from "../shared/summarizer-core";
+
 import { __test__ } from "../workers/summarizer/index";
 
 describe("workers/summarizer safeguards", () => {
   test("isStorySummaryFailure detects common failure strings", () => {
     expect(
-      __test__.isStorySummaryFailure({
+      isStorySummaryFailure({
         summary: "API error: API Error 524",
         discussion_summary: "ok"
       } as any)
     ).toBe(true);
 
     expect(
-      __test__.isStorySummaryFailure({
+      isStorySummaryFailure({
         summary: "Summary unavailable.",
         discussion_summary: "ok"
       } as any)
     ).toBe(true);
 
     expect(
-      __test__.isStorySummaryFailure({
+      isStorySummaryFailure({
         summary: "Error generating summary.",
         discussion_summary: "ok"
       } as any)
     ).toBe(true);
 
     expect(
-      __test__.isStorySummaryFailure({
+      isStorySummaryFailure({
         summary: "All good",
         discussion_summary: "All good"
       } as any)
@@ -44,13 +50,13 @@ describe("workers/summarizer safeguards", () => {
       "> **Discussion:** API error: API Error 400"
     ].join("\n");
 
-    expect(__test__.countFailuresInArticleMarkdown(md)).toBe(4);
+    expect(countFailuresInArticleMarkdown(md)).toBe(4);
   });
 
   test("isDigestFailure detects digest failure text", () => {
-    expect(__test__.isDigestFailure("Digest generation failed due to API error.")).toBe(true);
-    expect(__test__.isDigestFailure("Digest generation failed (empty content).")).toBe(true);
-    expect(__test__.isDigestFailure("All good")).toBe(false);
+    expect(isDigestFailureText("Digest generation failed due to API error.")).toBe(true);
+    expect(isDigestFailureText("Digest generation failed (empty content).")).toBe(true);
+    expect(isDigestFailureText("All good")).toBe(false);
   });
 
   test("commitToGitHub skips when skipIfWorse triggers", async () => {

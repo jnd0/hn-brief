@@ -1560,6 +1560,47 @@ export function formatDigestMarkdown(digestContent: string, date: string, storyC
 }
 
 // ============================================================================
+// Publication Guardrails (Shared)
+// ============================================================================
+
+export function isStorySummaryFailure(story: ProcessedStory): boolean {
+    const summary = (story.summary || '').trim();
+    const discussion = (story.discussion_summary || '').trim();
+
+    return (
+        /^API error:/i.test(summary) ||
+        /^API error:/i.test(discussion) ||
+        /^Error generating summary\.?$/i.test(summary) ||
+        /^Error generating summary\.?$/i.test(discussion) ||
+        /^Summary unavailable\.?$/i.test(summary) ||
+        /^Summary unavailable\.?$/i.test(discussion) ||
+        /^Discussion unavailable\.?$/i.test(discussion)
+    );
+}
+
+export function isDigestFailureText(digestContent: string): boolean {
+    return /^\s*Digest generation failed/i.test((digestContent || '').trim());
+}
+
+export function countFailuresInArticleMarkdown(md: string): number {
+    // formatArticleMarkdown emits blocks like:
+    // > **Article:** ...
+    // > **Discussion:** ...
+    // We count failure blocks (not stories) so the metric stays stable even if a single story
+    // has multiple failures.
+    const matches = String(md || '').match(
+        /> \*\*[^*]+:\*\*\s*(?:API error:|Error generating summary\.?|Summary unavailable\.?|Discussion unavailable\.?)/gi
+    );
+    return matches ? matches.length : 0;
+}
+
+export function wouldWorsenArticleMarkdown(nextMd: string, prevMd: string): string | null {
+    const nextFailures = countFailuresInArticleMarkdown(nextMd);
+    const prevFailures = countFailuresInArticleMarkdown(prevMd);
+    return nextFailures > prevFailures ? `would worsen failure count (${prevFailures} -> ${nextFailures})` : null;
+}
+
+// ============================================================================
 // Date Utilities
 // ============================================================================
 

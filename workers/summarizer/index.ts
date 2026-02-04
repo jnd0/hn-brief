@@ -14,7 +14,10 @@ import {
     parseDateComponents,
     getPostTypeLabel,
     resolveLLMConfigWithFallback,
-    createLLMConfig
+    createLLMConfig,
+    isStorySummaryFailure,
+    isDigestFailureText,
+    wouldWorsenArticleMarkdown
 } from '../../shared/summarizer-core';
 
 const MAX_STORY_FAILURES_TO_PUBLISH = 3;
@@ -29,34 +32,7 @@ type CommitResult = {
     reason?: 'identical' | 'worse';
 };
 
-function isStorySummaryFailure(story: ProcessedStory): boolean {
-    const summary = (story.summary || '').trim();
-    const discussion = (story.discussion_summary || '').trim();
-    return (
-        /^API error:/i.test(summary) ||
-        /^API error:/i.test(discussion) ||
-        /^Error generating summary\.?$/i.test(summary) ||
-        /^Error generating summary\.?$/i.test(discussion) ||
-        /^Summary unavailable\.?$/i.test(summary) ||
-        /^Summary unavailable\.?$/i.test(discussion)
-    );
-}
-
-function isDigestFailure(digestContent: string): boolean {
-    return /^\s*Digest generation failed/i.test((digestContent || '').trim());
-}
-
-function countFailuresInArticleMarkdown(md: string): number {
-    // formatArticleMarkdown emits blocks like:
-    // > **Article:** ...
-    // > **Discussion:** ...
-    // We count failure blocks (not stories) so the metric stays stable even if a single story
-    // has both an article and discussion failure.
-    const matches = md.match(
-        /> \*\*[^*]+:\*\*\s*(?:API error:|Error generating summary\.?|Summary unavailable\.?)/gi
-    );
-    return matches ? matches.length : 0;
-}
+// failure detection helpers live in shared/summarizer-core.ts
 
 // ============================================================================
 // Environment Interface
@@ -161,7 +137,7 @@ async function generateDailySummary(env: Env) {
     
     const digestContent = await generateDigest(processedStories, llmConfig);
     const digestMd = formatDigestMarkdown(digestContent, date, processedStories.length);
-    const digestSucceeded = !isDigestFailure(digestContent);
+    const digestSucceeded = !isDigestFailureText(digestContent);
 
     // 5. Commit both files to GitHub
     const folderPath = `summaries/${year}/${month}`;
@@ -174,11 +150,7 @@ async function generateDailySummary(env: Env) {
             undefined,
             {
                 skipIfWorse: (next, prev) => {
-                    const nextFailures = countFailuresInArticleMarkdown(next);
-                    const prevFailures = countFailuresInArticleMarkdown(prev);
-                    return nextFailures > prevFailures
-                        ? `would worsen failure count (${prevFailures} -> ${nextFailures})`
-                        : null;
+                    return wouldWorsenArticleMarkdown(next, prev);
                 }
             }
         );
@@ -339,8 +311,5 @@ async function updateArchive(env: Env, date: string, storyCount: number, digestS
 }
 
 export const __test__ = {
-    isStorySummaryFailure,
-    isDigestFailure,
-    countFailuresInArticleMarkdown,
     commitToGitHub
 };
