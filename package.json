@@ -5,7 +5,8 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "summarize": "bun run scripts/summarizer.ts"
+    "summarize": "bun run scripts/summarizer.ts",
+    "probe-llm": "bun run scripts/probe-llm.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251224.0",

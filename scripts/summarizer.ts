@@ -28,6 +28,7 @@ const { config: llmConfig, provider } = await resolveLLMConfigWithFallback({
   // Primary: Cebras
   CEBRAS_API_KEY: process.env.CEBRAS_API_KEY,
   CEBRAS_API_MODEL: process.env.CEBRAS_API_MODEL,
+  CEBRAS_REASONING_EFFORT: process.env.CEBRAS_REASONING_EFFORT,
   // Fallback: Nvidia NIM
   NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
   NVIDIA_MODEL: process.env.NVIDIA_MODEL,

@@ -28,6 +28,7 @@ export interface LLMConfig {
     model: string;
     provider?: 'cebras' | 'nvidia' | 'openrouter' | 'openai-compatible' | 'xiaomi';
     thinking?: boolean;
+    reasoningEffort?: 'low' | 'medium' | 'high';
 }
 
 export interface LLMLogger {
@@ -91,7 +92,8 @@ export const ALGOLIA_API = "https://hn.algolia.com/api/v1";
 // LLM Provider Defaults
 // Priority: OpenRouter > Cebras > Nvidia NIM > Xiaomi MiMo > OpenAI-compatible
 const DEFAULT_CEBRAS_URL = "https://api.cerebras.ai/v1/chat/completions";
-const DEFAULT_CEBRAS_MODEL = "qwen-3-235b-a22b-instruct-2507";
+// Default only applies when CEBRAS_API_MODEL is not set.
+const DEFAULT_CEBRAS_MODEL = "gpt-oss-120b";
 const DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_OPENROUTER_MODEL = "stepfun/step-3.5-flash:free";
 const OPENROUTER_CONTENT_FILTER_FALLBACK_MODEL = "arcee-ai/trinity-large-preview:free";
@@ -103,6 +105,7 @@ const DEFAULT_XIAOMI_MODEL = "mimo-v2-flash";
 export const MAX_TOKENS_FOR_REASONING = 16000;
 export const MAX_TOKENS_SUMMARY = 4000;
 export const MAX_TOKENS_DIGEST = MAX_TOKENS_FOR_REASONING;
+const NVIDIA_MAX_TOKENS_SUMMARY = 2500;
 const SUMMARY_TEMPERATURE = 0.6;
 const SUMMARY_TOP_P = 0.95;
 
@@ -118,6 +121,7 @@ export interface LLMEnv {
     CEBRAS_API_KEY?: string;
     CEBRAS_API_URL?: string;
     CEBRAS_API_MODEL?: string;
+    CEBRAS_REASONING_EFFORT?: string;
     // Fallback: Nvidia NIM
     NVIDIA_API_KEY?: string;
     NVIDIA_MODEL?: string;
@@ -149,6 +153,11 @@ function parseThinking(value?: string): boolean | undefined {
 function truncateText(text: string, maxLength: number): string {
     if (text.length <= maxLength) return text;
     return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function truncateJsonSnippet(text: string, maxLength = 240): string {
+    const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+    return truncateText(normalized, maxLength);
 }
 
 function getErrorMessage(error: unknown): string {
@@ -202,13 +211,22 @@ function applyThinkingMode(requestBody: Record<string, unknown>, config: LLMConf
 
 function createCebrasConfig(env: LLMEnv, thinking: boolean | undefined): { config: LLMConfig; provider: string } | null {
     if (!env.CEBRAS_API_KEY) return null;
+
+    const model = env.CEBRAS_API_MODEL || DEFAULT_CEBRAS_MODEL;
+    const rawEffort = (env.CEBRAS_REASONING_EFFORT || '').trim().toLowerCase();
+    const parsedEffort = rawEffort === 'low' || rawEffort === 'medium' || rawEffort === 'high'
+        ? (rawEffort as 'low' | 'medium' | 'high')
+        : undefined;
+
+    const reasoningEffort = parsedEffort || (model.startsWith('gpt-oss-') ? 'medium' : undefined);
     return {
         config: {
             apiKey: env.CEBRAS_API_KEY,
             apiUrl: env.CEBRAS_API_URL || DEFAULT_CEBRAS_URL,
-            model: env.CEBRAS_API_MODEL || DEFAULT_CEBRAS_MODEL,
+            model,
             provider: 'cebras',
-            thinking
+            thinking,
+            reasoningEffort
         },
         provider: 'Cebras'
     };
@@ -333,7 +351,8 @@ async function fetchCompletionWithMeta(
     url: string,
     apiKey: string,
     body: Record<string, unknown>,
-    fetcher?: FetchLike
+    fetcher?: FetchLike,
+    options?: { signal?: AbortSignal }
 ): Promise<{ content: string; finishReason?: string; nativeFinishReason?: string }> {
     const _fetch = fetcher || fetch;
     const response = await _fetch(url, {
@@ -343,7 +362,8 @@ async function fetchCompletionWithMeta(
             "User-Agent": "HN-Brief",
             "Authorization": `Bearer ${apiKey}`
         },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: options?.signal
     });
 
     if (!response.ok) {
@@ -364,11 +384,12 @@ async function fetchCompletionWithMeta(
     const primary =
         coerceContentToString(message?.content) ||
         coerceContentToString(message?.reasoning_content) ||
+        coerceContentToString((message as any)?.reasoning) ||
         coerceContentToString(message?.refusal) ||
         coerceContentToString(choice?.text) ||
         "";
 
-    // Some OpenRouter providers return the actual answer in `message.reasoning`.
+    // Some providers may return the actual answer in `message.reasoning`.
     // Only use it when it contains the expected XML tags to avoid publishing partial reasoning.
     const reasoning = coerceContentToString((message as any)?.reasoning);
     const reasoningLooksLikeAnswer = /<Content Summary>|<Discussion Summary>/.test(reasoning);
@@ -390,7 +411,7 @@ async function fetchStreamCompletion(
     apiKey: string,
     body: Record<string, unknown>,
     fetcher?: FetchLike,
-    options?: { stopAfter?: string[] }
+    options?: { stopAfter?: string[]; signal?: AbortSignal }
 ): Promise<string> {
     const _fetch = fetcher || fetch;
     const response = await _fetch(url, {
@@ -400,7 +421,8 @@ async function fetchStreamCompletion(
             "User-Agent": "HN-Brief",
             "Authorization": `Bearer ${apiKey}`
         },
-        body: JSON.stringify({ ...body, stream: true })
+        body: JSON.stringify({ ...body, stream: true }),
+        signal: options?.signal
     });
 
     if (!response.ok) {
@@ -412,12 +434,11 @@ async function fetchStreamCompletion(
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
-    let finalContent = "";
+    let contentOut = "";
+    let reasoningOut = "";
     const stopAfter = options?.stopAfter?.filter(Boolean) ?? null;
     let shouldStop = false;
-    // Note: We are consuming reasoning_content from the stream but currently only returning 
-    // the final content_summary logic expects "content". 
-    // If we need to capture reasoning for debugging, we can collect it here too.
+    // Prefer returning normal assistant content. Keep reasoning separately as fallback.
 
     try {
         while (true) {
@@ -438,11 +459,19 @@ async function fetchStreamCompletion(
                 try {
                     const json = JSON.parse(dataStr);
                     const delta = json.choices?.[0]?.delta;
-                    const deltaContent = delta?.content || delta?.reasoning_content;
+                    const deltaContent = typeof delta?.content === 'string' ? delta.content : '';
+                    const deltaReasoning = typeof delta?.reasoning_content === 'string' ? delta.reasoning_content : '';
+
                     if (deltaContent) {
-                        finalContent += deltaContent;
+                        contentOut += deltaContent;
+                    } else if (deltaReasoning) {
+                        reasoningOut += deltaReasoning;
+                    }
+
+                    const combined = contentOut || reasoningOut;
+                    if (combined) {
                         if (stopAfter && stopAfter.length > 0) {
-                            const hasAllStops = stopAfter.every((seq) => finalContent.includes(seq));
+                            const hasAllStops = stopAfter.every((seq) => combined.includes(seq));
                             if (hasAllStops) {
                                 shouldStop = true;
                                 void reader.cancel();
@@ -460,7 +489,7 @@ async function fetchStreamCompletion(
         reader.releaseLock();
     }
 
-    return finalContent;
+    return contentOut || reasoningOut;
 }
 
 /**
@@ -1032,27 +1061,104 @@ function rewriteRoboticDiscussionLead(text: string): string {
 // ============================================================================
 
 export async function probeLLM(config: LLMConfig, fetcher?: FetchLike): Promise<{ ok: boolean; error?: string }> {
+    const isCebras = isCebrasApi(config);
+    const isGptOss = isCebras && config.model.startsWith('gpt-oss-');
+
     const requestBody: Record<string, unknown> = {
         model: config.model,
         messages: [
             { role: "system", content: "You are a health check." },
             { role: "user", content: "Reply with OK." }
         ],
-        temperature: isNvidiaApi(config) ? 0.6 : 0
+        temperature: isNvidiaApi(config) ? 0.6 : (isGptOss ? 1 : 0)
     };
-    applyMaxTokens(requestBody, config, 32);
+
+    if (isGptOss) {
+        requestBody.top_p = 1;
+    }
+
+    if (isCebras && config.reasoningEffort) {
+        requestBody.reasoning_effort = config.reasoningEffort;
+    }
+
+    // gpt-oss models may emit reasoning before the final "OK"; give a bit more headroom.
+    applyMaxTokens(requestBody, config, isGptOss ? 256 : 32);
 
     // Use Instant Mode for Nvidia NIM to avoid 524 timeout during health check
     applyThinkingMode(requestBody, config, false);
 
+    const _fetch = fetcher || fetch;
+    const controller = new AbortController();
+    // Fail fast: health checks are just to validate basic config.
+    const timeoutMs = isNvidiaApi(config) ? 30000 : 15000;
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
-        const content = await fetchCompletion(config.apiUrl, config.apiKey, requestBody, fetcher);
-        if (!content || !content.trim()) {
-            return { ok: false, error: 'empty response' };
+        const response = await _fetch(config.apiUrl, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "User-Agent": "HN-Brief",
+                "Authorization": `Bearer ${config.apiKey}`
+            },
+            body: JSON.stringify(requestBody),
+            signal: controller.signal
+        });
+
+        const contentType = response.headers.get("content-type") || "";
+        const text = await response.text();
+
+        if (!response.ok) {
+            const snippet = text ? truncateJsonSnippet(text) : (response.statusText || "Unknown error");
+            return { ok: false, error: `status=${response.status} ${snippet}` };
         }
+
+        if (!text || !text.trim()) {
+            return { ok: false, error: `empty body (status=${response.status})` };
+        }
+
+        let data: any;
+        try {
+            data = JSON.parse(text);
+        } catch {
+            return { ok: false, error: `non-json response (${contentType || 'unknown'}): ${truncateJsonSnippet(text)}` };
+        }
+
+        if (data?.error) {
+            const message = data.error?.message || data.error?.detail || JSON.stringify(data.error);
+            return { ok: false, error: `API error: ${truncateJsonSnippet(String(message))}` };
+        }
+
+        const choice = data?.choices?.[0];
+        const message = choice?.message;
+        const finishReason = choice?.finish_reason;
+        const nativeFinishReason = choice?.native_finish_reason;
+
+        const primary =
+            coerceContentToString(message?.content) ||
+            coerceContentToString(message?.reasoning_content) ||
+            coerceContentToString(message?.refusal) ||
+            coerceContentToString(choice?.text) ||
+            "";
+
+        if (!primary || !primary.trim()) {
+            const choicesLen = Array.isArray(data?.choices) ? data.choices.length : 0;
+            const finish = typeof finishReason === 'string' ? finishReason : '';
+            const native = typeof nativeFinishReason === 'string' ? nativeFinishReason : '';
+            return {
+                ok: false,
+                error: `empty response (choices=${choicesLen}${finish ? ` finish=${finish}` : ''}${native ? ` native=${native}` : ''})`
+            };
+        }
+
         return { ok: true };
     } catch (error) {
+        if (controller.signal.aborted) {
+            return { ok: false, error: `timeout after ${timeoutMs}ms` };
+        }
         return { ok: false, error: getErrorMessage(error) };
+    } finally {
+        clearTimeout(timeoutId);
     }
 }
 
@@ -1152,7 +1258,15 @@ export async function summarizeStory(
             temperature: thinkingParams ? thinkingParams.temperature : SUMMARY_TEMPERATURE,
             top_p: thinkingParams ? thinkingParams.topP : SUMMARY_TOP_P
         };
-        applyMaxTokens(requestBody, config, MAX_TOKENS_SUMMARY);
+
+        // Encourage early termination once both blocks are produced.
+        requestBody.stop = ["</Discussion Summary>"];
+
+        if (isCebrasApi(config) && config.reasoningEffort) {
+            requestBody.reasoning_effort = config.reasoningEffort;
+        }
+        const maxTokens = isNvidiaApi(config) ? NVIDIA_MAX_TOKENS_SUMMARY : MAX_TOKENS_SUMMARY;
+        applyMaxTokens(requestBody, config, maxTokens);
 
         // Apply thinking mode with provider-specific format
         // Nvidia uses 'thinking' field or chat_template_kwargs
@@ -1165,12 +1279,14 @@ export async function summarizeStory(
         let content = "";
         let finishReason: string | undefined;
         try {
-            if (thinkingParams?.thinking) {
-                content = await fetchStreamCompletion(config.apiUrl, config.apiKey, requestBody, fetcher, {
-                    stopAfter: ["</Content Summary>", "</Discussion Summary>"]
+            const controller = new AbortController();
+            const timeoutMs = isNvidiaApi(config) ? 90000 : 60000;
+            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                // Avoid streaming (keeps Worker CPU lower); rely on stop sequences + timeouts instead.
+                const meta = await fetchCompletionWithMeta(config.apiUrl, config.apiKey, requestBody, fetcher, {
+                    signal: controller.signal
                 });
-            } else {
-                const meta = await fetchCompletionWithMeta(config.apiUrl, config.apiKey, requestBody, fetcher);
                 content = meta.content;
                 finishReason = meta.finishReason || meta.nativeFinishReason;
 
@@ -1189,6 +1305,8 @@ export async function summarizeStory(
                         finishReason = retryMeta.finishReason || retryMeta.nativeFinishReason;
                     }
                 }
+            } finally {
+                clearTimeout(timeoutId);
             }
         } catch (apiError: any) {
             const errorMessage = getErrorMessage(apiError);
@@ -1292,10 +1410,11 @@ export async function processStoriesWithRateLimit(
         logger?: LLMLogger;
     }
 ): Promise<ProcessedStory[]> {
+    const isNvidia = isNvidiaApi(llmConfig);
     const {
         batchSize = 5,
-        storyDelayMs = 1000,
-        batchDelayMs = 5000,
+        storyDelayMs = isNvidia ? 0 : 1000,
+        batchDelayMs = isNvidia ? 0 : 5000,
         indent = '',
         fetcher,
         logger
@@ -1310,20 +1429,28 @@ export async function processStoriesWithRateLimit(
         const batch = storyDetails.slice(i, i + batchSize);
         const batchNum = Math.floor(i / batchSize) + 1;
         logInfo(`${indent}Processing batch ${batchNum}/${totalBatches} (${batch.length} stories)...`);
-        
-        // Process sequentially with delay between each
-        for (const { hit, details } of batch) {
-            const summary = await summarizeStory(hit, details.children || [], llmConfig, fetcher, logger);
-            processedStories.push(summary);
-            
-            // Small delay between stories to avoid overwhelming API
-            if (processedStories.length < storyDetails.length) {
-                await new Promise(r => setTimeout(r, storyDelayMs));
+
+        if (isNvidia) {
+            // Nvidia NIM is typically latency-bound. Run each batch in parallel to fit within cron time limits.
+            const results = await Promise.all(
+                batch.map(({ hit, details }) => summarizeStory(hit, details.children || [], llmConfig, fetcher, logger))
+            );
+            processedStories.push(...results);
+        } else {
+            // Process sequentially with delay between each
+            for (const { hit, details } of batch) {
+                const summary = await summarizeStory(hit, details.children || [], llmConfig, fetcher, logger);
+                processedStories.push(summary);
+
+                // Small delay between stories to avoid overwhelming API
+                if (processedStories.length < storyDetails.length && storyDelayMs > 0) {
+                    await new Promise(r => setTimeout(r, storyDelayMs));
+                }
             }
         }
         
         // Delay between batches
-        if (i + batchSize < storyDetails.length) {
+        if (i + batchSize < storyDetails.length && batchDelayMs > 0) {
             logInfo(`${indent}⏳ Waiting ${batchDelayMs/1000}s before next batch...`);
             await new Promise(r => setTimeout(r, batchDelayMs));
         }
@@ -1346,7 +1473,7 @@ export async function generateDigest(
     try {
         const useThinkingConfig = supportsThinkingConfig(config);
         const thinkingParams = useThinkingConfig
-            ? resolveThinkingParams({ ...config, thinking: true }, true)
+            ? resolveThinkingParams(config, true)
             : null;
 
         const requestBody: Record<string, unknown> = {
@@ -1359,6 +1486,10 @@ export async function generateDigest(
         };
         applyMaxTokens(requestBody, config, MAX_TOKENS_DIGEST);
 
+        if (isCebrasApi(config) && config.reasoningEffort) {
+            requestBody.reasoning_effort = config.reasoningEffort;
+        }
+
         if (thinkingParams) {
             requestBody.top_p = thinkingParams.topP;
             // Only use chat_template_kwargs for Nvidia (vLLM/SGLang format)
@@ -1367,18 +1498,29 @@ export async function generateDigest(
             }
         }
 
-        applyThinkingMode(requestBody, config, true);
+        applyThinkingMode(requestBody, config, Boolean(thinkingParams?.thinking));
 
+        const controller = new AbortController();
+        const timeoutMs = isNvidiaApi(config) ? 210000 : 120000;
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
         try {
-            const content = thinkingParams?.thinking
-                ? await fetchStreamCompletion(config.apiUrl, config.apiKey, requestBody, fetcher)
-                : await fetchCompletion(config.apiUrl, config.apiKey, requestBody, fetcher);
+            // Avoid streaming here as well; use a longer timeout for digest.
+            const content = (await fetchCompletionWithMeta(config.apiUrl, config.apiKey, requestBody, fetcher, {
+                signal: controller.signal
+            })).content;
+
             return content || "Digest generation failed (empty content).";
         } catch (apiError: any) {
-            const errorMessage = getErrorMessage(apiError);
             const providerLabel = `${config.provider ?? 'unknown'}:${config.model}`;
+            if (controller.signal.aborted) {
+                console.error(`Digest API timeout [${providerLabel}] after ${timeoutMs}ms`);
+                return "Digest generation failed due to API timeout.";
+            }
+            const errorMessage = getErrorMessage(apiError);
             console.error(`Digest API error [${providerLabel}]: ${errorMessage}`);
             return "Digest generation failed due to API error.";
+        } finally {
+            clearTimeout(timeoutId);
         }
 
     } catch (e) {
