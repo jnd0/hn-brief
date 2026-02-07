@@ -67,6 +67,8 @@ bun run summarize -- --help
 | `--date <YYYY-MM-DD>` | `-d` | Run for a specific date (default: today) |
 | `--articles` | `-a` | Generate only article summaries |
 | `--digest` | `-g` | Generate only digest summary |
+| `--repair` | `-r` | Repair low-quality stories in an existing article file |
+| `--id <HN_ID>` | - | Repair a specific story ID (repeatable, with `--repair`) |
 | `--help` | `-h` | Show help message |
 
 #### Examples
@@ -83,6 +85,12 @@ bun run summarize -- --articles
 
 # Generate only digest for a specific date
 bun run summarize -- -d 2025-12-25 -g
+
+# Auto-repair broken stories for a date
+bun run summarize -- -r -d 2026-02-06
+
+# Repair a specific story by HN ID
+bun run summarize -- -r -d 2026-02-06 --id 46911869
 ```
 
 

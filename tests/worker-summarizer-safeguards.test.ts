@@ -53,6 +53,15 @@ describe("workers/summarizer safeguards", () => {
     expect(countFailuresInArticleMarkdown(md)).toBe(4);
   });
 
+  test("countFailuresInArticleMarkdown treats placeholder lines as failures", () => {
+    const md = [
+      "> **Article:** ...",
+      "> **Discussion:** and"
+    ].join("\n");
+
+    expect(countFailuresInArticleMarkdown(md)).toBe(2);
+  });
+
   test("isDigestFailure detects digest failure text", () => {
     expect(isDigestFailureText("Digest generation failed due to API error.")).toBe(true);
     expect(isDigestFailureText("Digest generation failed (empty content).")).toBe(true);
