@@ -7,6 +7,7 @@ import {
   formatArticleMarkdown,
   parseArticleMarkdownStories,
   replaceStoriesInArticleMarkdown,
+  findRepairableStoryIdsInMarkdown,
   scoreComment,
   selectAndFormatComments,
   createLLMConfig,
@@ -147,6 +148,45 @@ It needs to be over 50 chars so I am typing more words here to ensure it is pick
       expect(parsed[0]?.id).toBe("1");
       expect(parsed[1]?.id).toBe("2");
       expect(parsed[1]?.postType).toBe("show_hn");
+    });
+
+    test("parseArticleMarkdownStories keeps legacy blocks without ID", () => {
+      const md = [
+        "# Hacker News Summary - 2026-02-06",
+        "",
+        "## [Legacy Story](https://example.com/legacy)",
+        "**Score:** 42 | **Comments:** 12",
+        "",
+        "> **Article:** Legacy summary",
+        ">",
+        "> **Discussion:** Legacy discussion",
+        "",
+        "---",
+        ""
+      ].join("\n");
+
+      const parsed = parseArticleMarkdownStories(md);
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0]?.title).toBe("Legacy Story");
+      expect(parsed[0]?.id).toBe("");
+    });
+
+    test("findRepairableStoryIdsInMarkdown skips repair candidates without IDs", () => {
+      const md = [
+        "# Hacker News Summary - 2026-02-06",
+        "",
+        "## [Legacy Story](https://example.com/legacy)",
+        "**Score:** 42 | **Comments:** 12",
+        "",
+        "> **Article:** ...",
+        ">",
+        "> **Discussion:** ...",
+        "",
+        "---",
+        ""
+      ].join("\n");
+
+      expect(findRepairableStoryIdsInMarkdown(md)).toEqual([]);
     });
 
     test("replaceStoriesInArticleMarkdown updates only selected IDs", () => {

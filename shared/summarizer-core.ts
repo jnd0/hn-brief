@@ -1684,12 +1684,53 @@ function getPostTypeFromSummaryLabel(label: string): PostType {
     return 'article';
 }
 
+function extractHnItemId(url: string): string {
+    const value = String(url || '').trim();
+    if (!value) return '';
+
+    const queryMatch = value.match(/[?&]id=(\d+)/);
+    if (queryMatch?.[1]) return queryMatch[1];
+
+    const trailingMatch = value.match(/\/(\d+)\/?$/);
+    if (trailingMatch?.[1]) return trailingMatch[1];
+
+    return '';
+}
+
+export function hasValidStoryId(id: string | null | undefined): id is string {
+    return /^\d+$/.test(String(id || '').trim());
+}
+
+export function buildRepairStoryHit(existing: ProcessedStory, details: StoryDetails): AlgoliaHit {
+    const existingId = String(existing.id || '').trim();
+    const detailId = String(details.id || '').trim();
+    const resolvedId = hasValidStoryId(existingId) ? existingId : detailId;
+
+    if (!hasValidStoryId(resolvedId)) {
+        throw new Error(`Cannot build repair hit without valid story ID (title: ${existing.title})`);
+    }
+
+    const fallbackUrl = existing.url || `https://news.ycombinator.com/item?id=${resolvedId}`;
+    const detailChildren = Array.isArray(details.children) ? details.children : [];
+
+    return {
+        objectID: resolvedId,
+        title: details.title || existing.title,
+        url: details.url || fallbackUrl,
+        text: details.text,
+        points: typeof details.points === 'number' ? details.points : existing.points,
+        num_comments: existing.num_comments || detailChildren.length || 0,
+        created_at_i: Math.floor(Date.now() / 1000)
+    };
+}
+
 function parseStoryBlock(block: string): ProcessedStory | null {
     const titleMatch = block.match(/^## \[([^\]]+)\]\(([^)]+)\)/m);
-    const metaMatch = block.match(/\*\*Score:\*\* (\d+) \| \*\*Comments:\*\* (\d+)(?:\s*\|\s*\*\*ID:\*\*\s*(\d+))?/m);
-    const id = metaMatch?.[3]?.trim();
+    const metaMatch = block.match(/\*\*Score:\*\* (\d+)(?:\s*\|\s*\*\*Comments:\*\* (\d+))?(?:\s*\|\s*\*\*ID:\*\*\s*(\d+))?/m);
+    const url = titleMatch?.[2] || '';
+    const id = (metaMatch?.[3]?.trim() || extractHnItemId(url)).trim();
 
-    if (!titleMatch || !metaMatch || !id) return null;
+    if (!titleMatch || !metaMatch) return null;
 
     let summaryLabel = 'Article';
     const summaryParts: string[] = [];
@@ -1736,7 +1777,7 @@ function parseStoryBlock(block: string): ProcessedStory | null {
     return {
         id,
         title: titleMatch[1] || '',
-        url: titleMatch[2] || `https://news.ycombinator.com/item?id=${id}`,
+        url: url || (id ? `https://news.ycombinator.com/item?id=${id}` : ''),
         points: parseInt(metaMatch[1] || '0', 10),
         num_comments: parseInt(metaMatch[2] || '0', 10),
         summary: summaryParts.join('\n').trim(),
@@ -1824,7 +1865,7 @@ export function replaceStoriesInArticleMarkdown(
 
 export function findRepairableStoryIdsInMarkdown(md: string): string[] {
     return parseArticleMarkdownStories(md)
-        .filter((story) => needsStoryRepair(story))
+        .filter((story) => hasValidStoryId(story.id) && needsStoryRepair(story))
         .map((story) => story.id);
 }
 

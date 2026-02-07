@@ -9,7 +9,6 @@ import { mkdir } from "fs/promises";
 import {
   type ProcessedStory,
   type AlgoliaHit,
-  type StoryDetails,
   fetchTopStories,
   fetchStoryDetails,
   processStoriesWithRateLimit,
@@ -24,7 +23,9 @@ import {
   replaceStoriesInArticleMarkdown,
   findRepairableStoryIdsInMarkdown,
   needsStoryRepair,
-  isDigestMarkdownEmptyOrFailed
+  isDigestMarkdownEmptyOrFailed,
+  hasValidStoryId,
+  buildRepairStoryHit
 } from '../shared/summarizer-core';
 
 // ============================================================================
@@ -162,21 +163,6 @@ function getDatesInYear(year: string): string[] {
   return dates.filter(d => d <= today);
 }
 
-function buildRepairHit(id: string, existing: ProcessedStory, details: StoryDetails): AlgoliaHit {
-  const fallbackUrl = existing.url || `https://news.ycombinator.com/item?id=${id}`;
-  const detailChildren = Array.isArray(details.children) ? details.children : [];
-
-  return {
-    objectID: id,
-    title: details.title || existing.title,
-    url: details.url || fallbackUrl,
-    text: details.text,
-    points: typeof details.points === 'number' ? details.points : existing.points,
-    num_comments: existing.num_comments || detailChildren.length || 0,
-    created_at_i: Math.floor(Date.now() / 1000)
-  };
-}
-
 async function maybeRegenerateDigest(date: string, stories: ProcessedStory[]): Promise<boolean> {
   const [year, month, day] = date.split('-');
   const digestPath = `summaries/${year}/${month}/${day}-digest.md`;
@@ -217,7 +203,7 @@ async function repairDate(date: string, storyIds: string[]): Promise<{ date: str
 
   const currentMd = await articleFile.text();
   const stories = parseArticleMarkdownStories(currentMd);
-  const storiesById = new Map(stories.map((story) => [story.id, story]));
+  const storiesById = new Map(stories.filter((story) => hasValidStoryId(story.id)).map((story) => [story.id, story]));
 
   let targets = Array.from(new Set(storyIds.map((id) => id.trim()).filter(Boolean)));
   if (targets.length === 0) {
@@ -240,7 +226,7 @@ async function repairDate(date: string, storyIds: string[]): Promise<{ date: str
 
     console.log(`   🔧 Repairing story ${id}: ${existing.title}`);
     const details = await fetchStoryDetails(id);
-    const hit = buildRepairHit(id, existing, details);
+    const hit = buildRepairStoryHit(existing, details);
     const repaired = await summarizeStoryWithFallbacks(
       hit,
       details.children || [],

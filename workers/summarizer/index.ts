@@ -3,7 +3,6 @@
 import {
     type ProcessedStory,
     type AlgoliaHit,
-    type StoryDetails,
     type LLMEnv,
     fetchTopStories,
     fetchStoryDetails,
@@ -23,7 +22,9 @@ import {
     parseArticleMarkdownStories,
     replaceStoriesInArticleMarkdown,
     findRepairableStoryIdsInMarkdown,
-    isDigestMarkdownEmptyOrFailed
+    isDigestMarkdownEmptyOrFailed,
+    hasValidStoryId,
+    buildRepairStoryHit
 } from '../../shared/summarizer-core';
 
 const MAX_STORY_FAILURES_TO_PUBLISH = 3;
@@ -219,25 +220,6 @@ type RepairOptions = {
     reason: 'manual' | 'automated';
 };
 
-function buildRepairHit(
-    id: string,
-    existing: ProcessedStory,
-    details: StoryDetails
-): AlgoliaHit {
-    const fallbackUrl = existing.url || `https://news.ycombinator.com/item?id=${id}`;
-    const detailChildren = Array.isArray(details.children) ? details.children : [];
-
-    return {
-        objectID: id,
-        title: details.title || existing.title,
-        url: details.url || fallbackUrl,
-        text: details.text,
-        points: typeof details.points === 'number' ? details.points : existing.points,
-        num_comments: existing.num_comments || detailChildren.length || 0,
-        created_at_i: Math.floor(Date.now() / 1000)
-    };
-}
-
 async function runAutomatedRepair(env: Env): Promise<void> {
     const date = getLondonDate();
     console.log(`Running automated repair pass for ${date}`);
@@ -270,7 +252,7 @@ async function repairStoriesForDate(env: Env, options: RepairOptions): Promise<v
     }
 
     const parsedStories = parseArticleMarkdownStories(articleContent);
-    const storiesById = new Map(parsedStories.map((story) => [story.id, story]));
+    const storiesById = new Map(parsedStories.filter((story) => hasValidStoryId(story.id)).map((story) => [story.id, story]));
 
     let targetIds = Array.from(new Set((options.targetIds || []).map((id) => id.trim()).filter(Boolean)));
     if (targetIds.length === 0) {
@@ -293,7 +275,7 @@ async function repairStoriesForDate(env: Env, options: RepairOptions): Promise<v
 
         try {
             const details = await fetchStoryDetails(id);
-            const hit = buildRepairHit(id, existing, details);
+            const hit = buildRepairStoryHit(existing, details);
             const repaired = await summarizeStoryWithFallbacks(
                 hit,
                 details.children || [],

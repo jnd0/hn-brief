@@ -112,11 +112,13 @@ Comment selection (optional):
 - Error handling patterns
 - Data transformation logic
 - API request formatting
+- Repair-specific helpers (e.g., building repair hits, story ID validation, markdown patch/parse utilities)
 
 **Solution**: Extract shared logic into `shared/summarizer-core.ts`:
 - Create reusable functions (e.g., `processStoriesWithRateLimit()`)
 - Export shared types and interfaces
 - Keep environment-specific code (file I/O, GitHub commits) in respective files
+- If logic is needed by both local script and worker, add it to shared first (for example `buildRepairStoryHit()` and markdown parsing helpers)
 
 **When adding new features:**
 1. Check if similar logic exists in the other file
