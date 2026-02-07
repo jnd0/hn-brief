@@ -515,5 +515,6 @@ async function updateArchive(env: Env, date: string, storyCount: number, digestS
 }
 
 export const __test__ = {
-    commitToGitHub
+    commitToGitHub,
+    encodeBase64Utf8
 };

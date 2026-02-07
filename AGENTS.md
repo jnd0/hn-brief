@@ -107,6 +107,8 @@ Comment selection (optional):
 
 **CRITICAL**: Avoid duplicating logic between `scripts/summarizer.ts` and `workers/summarizer/index.ts`. Both files perform similar operations but for different environments (local vs Cloudflare Worker).
 
+When adding tests for worker internals, avoid copy-pasting implementation helpers into test files. Prefer exposing test-only helpers through `__test__` exports from the source module and reusing those in tests.
+
 **Common duplication issues:**
 - Story batch processing and rate limiting
 - Error handling patterns

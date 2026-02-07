@@ -9,15 +9,7 @@ import {
 import { __test__ } from "../workers/summarizer/index";
 
 describe("workers/summarizer safeguards", () => {
-  const toBase64Utf8 = (input: string): string => {
-    const bytes = new TextEncoder().encode(input);
-    let binary = "";
-    const chunkSize = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-    }
-    return btoa(binary);
-  };
+  const toBase64Utf8 = __test__.encodeBase64Utf8;
 
   test("isStorySummaryFailure detects common failure strings", () => {
     expect(
