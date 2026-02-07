@@ -2,6 +2,11 @@ import { describe, expect, test, mock, spyOn } from "bun:test";
 import {
   detectPostType,
   parseSummaryResponse,
+  isLowQualitySummaryText,
+  needsStoryRepair,
+  formatArticleMarkdown,
+  parseArticleMarkdownStories,
+  replaceStoriesInArticleMarkdown,
   scoreComment,
   selectAndFormatComments,
   createLLMConfig,
@@ -87,6 +92,97 @@ It needs to be over 50 chars so I am typing more words here to ensure it is pick
       const result = parseSummaryResponse(input);
       expect(result.summary).toBe("Summary unavailable.");
       expect(result.discussion).toBe("Discussion unavailable.");
+    });
+  });
+
+  describe("repair detection helpers", () => {
+    test("isLowQualitySummaryText catches placeholders", () => {
+      expect(isLowQualitySummaryText("...")).toBe(true);
+      expect(isLowQualitySummaryText("and")).toBe(true);
+      expect(isLowQualitySummaryText("A detailed explanation with actual content.")).toBe(false);
+    });
+
+    test("needsStoryRepair combines hard failures and placeholders", () => {
+      expect(needsStoryRepair({ summary: "API error: 524", discussion_summary: "ok" })).toBe(true);
+      expect(needsStoryRepair({ summary: "...", discussion_summary: "Reasonable discussion" })).toBe(true);
+      expect(needsStoryRepair({ summary: "Complete summary", discussion_summary: "Complete discussion" })).toBe(false);
+    });
+  });
+
+  describe("article markdown story patching", () => {
+    test("parseArticleMarkdownStories extracts stories", () => {
+      const md = formatArticleMarkdown([
+        {
+          id: "1",
+          title: "Story One",
+          url: "https://example.com/1",
+          points: 100,
+          num_comments: 50,
+          summary: "First summary",
+          discussion_summary: "First discussion",
+          postType: "article"
+        },
+        {
+          id: "2",
+          title: "Story Two",
+          url: "https://example.com/2",
+          points: 80,
+          num_comments: 30,
+          summary: "Second summary",
+          discussion_summary: "Second discussion",
+          postType: "show_hn"
+        }
+      ], "2026-02-06");
+
+      const parsed = parseArticleMarkdownStories(md);
+      expect(parsed).toHaveLength(2);
+      expect(parsed[0]?.id).toBe("1");
+      expect(parsed[1]?.id).toBe("2");
+      expect(parsed[1]?.postType).toBe("show_hn");
+    });
+
+    test("replaceStoriesInArticleMarkdown updates only selected IDs", () => {
+      const md = formatArticleMarkdown([
+        {
+          id: "1",
+          title: "Story One",
+          url: "https://example.com/1",
+          points: 100,
+          num_comments: 50,
+          summary: "Original one",
+          discussion_summary: "Discussion one",
+          postType: "article"
+        },
+        {
+          id: "2",
+          title: "Story Two",
+          url: "https://example.com/2",
+          points: 80,
+          num_comments: 30,
+          summary: "Original two",
+          discussion_summary: "Discussion two",
+          postType: "article"
+        }
+      ], "2026-02-06");
+
+      const replacement = {
+        id: "2",
+        title: "Story Two",
+        url: "https://example.com/2",
+        points: 80,
+        num_comments: 30,
+        summary: "Updated summary two",
+        discussion_summary: "Updated discussion two",
+        postType: "article" as const
+      };
+
+      const patched = replaceStoriesInArticleMarkdown(md, { "2": replacement });
+      expect(patched.updatedIds).toEqual(["2"]);
+      expect(patched.missingIds).toEqual([]);
+
+      const parsed = parseArticleMarkdownStories(patched.markdown);
+      expect(parsed[0]?.summary).toBe("Original one");
+      expect(parsed[1]?.summary).toBe("Updated summary two");
     });
   });
 

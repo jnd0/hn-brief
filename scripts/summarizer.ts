@@ -9,22 +9,29 @@ import { mkdir } from "fs/promises";
 import {
   type ProcessedStory,
   type AlgoliaHit,
+  type StoryDetails,
   fetchTopStories,
   fetchStoryDetails,
   processStoriesWithRateLimit,
   generateDigest,
   formatArticleMarkdown,
   formatDigestMarkdown,
-  getPostTypeLabel,
   getLondonDate,
-  resolveLLMConfigWithFallback
+  resolveLLMConfigWithFallback,
+  createLLMConfigCandidates,
+  summarizeStoryWithFallbacks,
+  parseArticleMarkdownStories,
+  replaceStoriesInArticleMarkdown,
+  findRepairableStoryIdsInMarkdown,
+  needsStoryRepair,
+  isDigestMarkdownEmptyOrFailed
 } from '../shared/summarizer-core';
 
 // ============================================================================
 // Configuration
 // ============================================================================
 
-const { config: llmConfig, provider } = await resolveLLMConfigWithFallback({
+const llmEnv = {
   // Primary: Cebras
   CEBRAS_API_KEY: process.env.CEBRAS_API_KEY,
   CEBRAS_API_MODEL: process.env.CEBRAS_API_MODEL,
@@ -47,7 +54,10 @@ const { config: llmConfig, provider } = await resolveLLMConfigWithFallback({
   // Thinking mode
   LLM_THINKING_FORCE: process.env.LLM_THINKING_FORCE,
   LLM_THINKING: process.env.LLM_THINKING
-}, console);
+};
+
+const llmConfigCandidates = createLLMConfigCandidates(llmEnv).map((candidate) => candidate.config);
+const { config: llmConfig } = await resolveLLMConfigWithFallback(llmEnv, console);
 
 // ============================================================================
 // CLI Arguments
@@ -58,12 +68,14 @@ interface CLIOptions {
   month?: string;  // YYYY-MM format
   year?: string;   // YYYY format
   mode?: 'all' | 'articles' | 'digest';
+  repair?: boolean;
+  storyIds: string[];
   help?: boolean;
 }
 
 function parseCliArgs(): CLIOptions {
   const args = process.argv.slice(2);
-  const options: CLIOptions = { mode: 'all' };
+  const options: CLIOptions = { mode: 'all', storyIds: [] };
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -77,6 +89,11 @@ function parseCliArgs(): CLIOptions {
       options.mode = 'articles';
     } else if (arg === '--digest' || arg === '-g') {
       options.mode = 'digest';
+    } else if (arg === '--repair' || arg === '-r') {
+      options.repair = true;
+    } else if (arg === '--id') {
+      const id = args[++i];
+      if (id) options.storyIds.push(id);
     } else if (arg === '--help' || arg === '-h') {
       options.help = true;
     }
@@ -97,6 +114,8 @@ Options:
   -y, --year <YYYY>         Generate for entire year (batch mode)
   -a, --articles            Generate only article summaries
   -g, --digest              Generate only digest summary
+  -r, --repair              Repair stories in existing article markdown
+      --id <HN_ID>          Story ID to repair (repeatable)
   -h, --help                Show this help message
 
 Examples:
@@ -106,6 +125,8 @@ Examples:
   bun run scripts/summarizer.ts --year 2025         # Generate for all of 2025
   bun run scripts/summarizer.ts -m 2025-12 -a       # Month, articles only
   bun run scripts/summarizer.ts -d 2025-12-25 -g   # Generate only digest for date
+  bun run scripts/summarizer.ts -r -d 2026-02-06    # Repair broken stories on date
+  bun run scripts/summarizer.ts -r -d 2026-02-06 --id 46911869  # Repair one story
 `);
 }
 
@@ -139,6 +160,116 @@ function getDatesInYear(year: string): string[] {
     dates.push(...getDatesInMonth(yearMonth));
   }
   return dates.filter(d => d <= today);
+}
+
+function buildRepairHit(id: string, existing: ProcessedStory, details: StoryDetails): AlgoliaHit {
+  const fallbackUrl = existing.url || `https://news.ycombinator.com/item?id=${id}`;
+  const detailChildren = Array.isArray(details.children) ? details.children : [];
+
+  return {
+    objectID: id,
+    title: details.title || existing.title,
+    url: details.url || fallbackUrl,
+    text: details.text,
+    points: typeof details.points === 'number' ? details.points : existing.points,
+    num_comments: existing.num_comments || detailChildren.length || 0,
+    created_at_i: Math.floor(Date.now() / 1000)
+  };
+}
+
+async function maybeRegenerateDigest(date: string, stories: ProcessedStory[]): Promise<boolean> {
+  const [year, month, day] = date.split('-');
+  const digestPath = `summaries/${year}/${month}/${day}-digest.md`;
+  const digestFile = Bun.file(digestPath);
+
+  let shouldRegenerate = false;
+  if (!await digestFile.exists()) {
+    shouldRegenerate = true;
+  } else {
+    const current = await digestFile.text();
+    shouldRegenerate = isDigestMarkdownEmptyOrFailed(current);
+  }
+
+  if (!shouldRegenerate) {
+    return false;
+  }
+
+  console.log(`   ♻️ Digest missing/empty for ${date}; regenerating...`);
+  const digestContent = await generateDigest(stories, llmConfig);
+  if (isDigestMarkdownEmptyOrFailed(digestContent)) {
+    console.log(`   ⚠️ Digest regeneration failed for ${date}; leaving digest untouched.`);
+    return false;
+  }
+
+  const digestMd = formatDigestMarkdown(digestContent, date, stories.length);
+  await Bun.write(digestPath, digestMd);
+  console.log(`   ✅ Repaired digest`);
+  return true;
+}
+
+async function repairDate(date: string, storyIds: string[]): Promise<{ date: string; storyCount: number }> {
+  const [year, month, day] = date.split('-');
+  const articlePath = `summaries/${year}/${month}/${day}.md`;
+  const articleFile = Bun.file(articlePath);
+  if (!await articleFile.exists()) {
+    throw new Error(`No article file found for ${date}: ${articlePath}`);
+  }
+
+  const currentMd = await articleFile.text();
+  const stories = parseArticleMarkdownStories(currentMd);
+  const storiesById = new Map(stories.map((story) => [story.id, story]));
+
+  let targets = Array.from(new Set(storyIds.map((id) => id.trim()).filter(Boolean)));
+  if (targets.length === 0) {
+    targets = findRepairableStoryIdsInMarkdown(currentMd);
+  }
+
+  if (targets.length === 0) {
+    console.log(`   ✅ No repairable stories for ${date}`);
+    await maybeRegenerateDigest(date, stories);
+    return { date, storyCount: stories.length };
+  }
+
+  const replacements = new Map<string, ProcessedStory>();
+  for (const id of targets) {
+    const existing = storiesById.get(id);
+    if (!existing) {
+      console.log(`   ⚠️ Story ${id} not found in ${articlePath}`);
+      continue;
+    }
+
+    console.log(`   🔧 Repairing story ${id}: ${existing.title}`);
+    const details = await fetchStoryDetails(id);
+    const hit = buildRepairHit(id, existing, details);
+    const repaired = await summarizeStoryWithFallbacks(
+      hit,
+      details.children || [],
+      llmConfigCandidates,
+      undefined,
+      console
+    );
+
+    if (needsStoryRepair(repaired)) {
+      console.log(`   ⚠️ Story ${id} still low quality after fallbacks; keeping original.`);
+      continue;
+    }
+
+    replacements.set(id, repaired);
+  }
+
+  let nextMd = currentMd;
+  if (replacements.size > 0) {
+    const patched = replaceStoriesInArticleMarkdown(currentMd, replacements);
+    nextMd = patched.markdown;
+    await Bun.write(articlePath, nextMd);
+    console.log(`   ✅ Repaired ${patched.updatedIds.length} story(ies)`);
+  } else {
+    console.log(`   ⚠️ No stories were improved for ${date}`);
+  }
+
+  const finalStories = parseArticleMarkdownStories(nextMd);
+  await maybeRegenerateDigest(date, finalStories);
+  return { date, storyCount: finalStories.length };
 }
 
 // ============================================================================
@@ -301,6 +432,23 @@ async function main() {
 
   if (options.help) {
     showHelp();
+    return;
+  }
+
+  if (options.repair) {
+    const repairDateValue = options.date || getLondonDate();
+    console.log(`\n🛠️ Repair mode: ${repairDateValue}`);
+    if (options.storyIds.length > 0) {
+      console.log(`🎯 Target story IDs: ${options.storyIds.join(', ')}`);
+    } else {
+      console.log('🎯 Target story IDs: auto-detect broken stories');
+    }
+
+    const result = await repairDate(repairDateValue, options.storyIds);
+    const [year, month, day] = repairDateValue.split('-');
+    const digestExists = await Bun.file(`summaries/${year}/${month}/${day}-digest.md`).exists();
+    await updateArchive([result], digestExists ? 'all' : 'articles');
+    console.log(`\n🎉 Repair complete for ${repairDateValue}.`);
     return;
   }
 

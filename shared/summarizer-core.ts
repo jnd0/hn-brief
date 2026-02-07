@@ -36,6 +36,11 @@ export interface LLMLogger {
     error: (...args: any[]) => void;
 }
 
+export interface LLMConfigSelection {
+    config: LLMConfig;
+    provider: string;
+}
+
 export interface AlgoliaHit {
     objectID: string;
     title: string;
@@ -60,6 +65,14 @@ export interface Comment {
     author: string;
     text: string;
     children?: Comment[];
+}
+
+export interface ArticleMarkdownStoryBlock {
+    id: string;
+    start: number;
+    end: number;
+    raw: string;
+    story: ProcessedStory;
 }
 
 /** Metadata computed for each comment during tree analysis */
@@ -500,34 +513,49 @@ async function fetchStreamCompletion(
  * @throws Error if no API key is configured
  */
 export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: string } {
+    const candidates = createLLMConfigCandidates(env);
+    if (candidates.length > 0) {
+        return candidates[0]!;
+    }
+
+    throw new Error(
+        'No LLM API key found. Set CEBRAS_API_KEY, NVIDIA_API_KEY, XIAOMI_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY with LLM_API_URL + LLM_MODEL.'
+    );
+}
+
+export function createLLMConfigCandidates(env: LLMEnv): LLMConfigSelection[] {
     const thinking = parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
+    const candidates: LLMConfigSelection[] = [];
 
     // Priority 1: OpenRouter (preferred)
     const openrouter = createOpenRouterConfig(env, thinking);
-    if (openrouter) return openrouter;
+    if (openrouter) candidates.push(openrouter);
 
     // Priority 2: Cebras
     const cebras = createCebrasConfig(env, thinking);
-    if (cebras) return cebras;
+    if (cebras) candidates.push(cebras);
 
     // Priority 3: Nvidia NIM
     const nvidia = createNvidiaConfig(env, thinking);
-    if (nvidia) return nvidia;
+    if (nvidia) candidates.push(nvidia);
 
     // Priority 4: Xiaomi MiMo
     const xiaomi = createXiaomiConfig(env, thinking);
     if (xiaomi) {
-        return xiaomi;
+        candidates.push(xiaomi);
     }
 
     // Priority 5: OpenAI-compatible (requires explicit URL and model)
     if (env.OPENAI_API_KEY) {
         if (!env.LLM_API_URL || !env.LLM_MODEL) {
-            throw new Error(
-                'When using OPENAI_API_KEY, you must also set LLM_API_URL and LLM_MODEL'
-            );
+            if (candidates.length === 0) {
+                throw new Error(
+                    'When using OPENAI_API_KEY, you must also set LLM_API_URL and LLM_MODEL'
+                );
+            }
+            return candidates;
         }
-        return {
+        candidates.push({
             config: {
                 apiKey: env.OPENAI_API_KEY,
                 apiUrl: env.LLM_API_URL,
@@ -536,12 +564,10 @@ export function createLLMConfig(env: LLMEnv): { config: LLMConfig; provider: str
                 thinking
             },
             provider: 'OpenAI-compatible'
-        };
+        });
     }
 
-    throw new Error(
-        'No LLM API key found. Set CEBRAS_API_KEY, NVIDIA_API_KEY, XIAOMI_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY with LLM_API_URL + LLM_MODEL.'
-    );
+    return candidates;
 }
 
 export function createXiaomiConfig(env: LLMEnv, thinking?: boolean): { config: LLMConfig; provider: string } | null {
@@ -1056,6 +1082,46 @@ function rewriteRoboticDiscussionLead(text: string): string {
     return out;
 }
 
+function normalizeComparableText(text: string): string {
+    return String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+export function isLowQualitySummaryText(text: string): boolean {
+    const normalized = normalizeComparableText(text);
+    if (!normalized) return true;
+
+    if (/^[.?!,_\-:;]+$/.test(normalized)) return true;
+    if (/^(?:\.{2,}|…+)$/.test(normalized)) return true;
+
+    const exactPlaceholders = new Set([
+        'and',
+        'n/a',
+        'na',
+        'none',
+        'null',
+        'unknown',
+        'tbd',
+        'todo',
+        '[removed]',
+        '[deleted]'
+    ]);
+    if (exactPlaceholders.has(normalized)) return true;
+
+    const words = normalized.split(' ').filter(Boolean);
+    if (words.length === 1 && normalized.length <= 12) {
+        return true;
+    }
+
+    return false;
+}
+
+export function isStorySummaryLowQuality(story: Pick<ProcessedStory, 'summary' | 'discussion_summary'>): boolean {
+    return (
+        isLowQualitySummaryText(story.summary) ||
+        isLowQualitySummaryText(story.discussion_summary)
+    );
+}
+
 // ============================================================================
 // LLM API Calls
 // ============================================================================
@@ -1167,23 +1233,8 @@ export async function resolveLLMConfigWithFallback(
     logger: LLMLogger = { info: () => {}, error: () => {} },
     fetcher?: FetchLike
 ): Promise<{ config: LLMConfig; provider: string; usedFallback: boolean }>{
-    // Try providers in order: OpenRouter -> Cebras -> Nvidia -> Xiaomi
-    const providers: { config: LLMConfig; provider: string }[] = [];
-
-    const thinking = parseThinking(env.LLM_THINKING_FORCE ?? env.LLM_THINKING);
-    
-    // Build list of available providers
-    const openrouter = createOpenRouterConfig(env, thinking);
-    if (openrouter) providers.push(openrouter);
-
-    const cebras = createCebrasConfig(env, thinking);
-    if (cebras) providers.push(cebras);
-
-    const nvidia = createNvidiaConfig(env, thinking);
-    if (nvidia) providers.push(nvidia);
-
-    const xiaomi = createXiaomiConfig(env, thinking);
-    if (xiaomi) providers.push(xiaomi);
+    // Try providers in order: OpenRouter -> Cebras -> Nvidia -> Xiaomi -> OpenAI-compatible
+    const providers = createLLMConfigCandidates(env);
     
     if (providers.length === 0) {
         throw new Error('No LLM API key found. Set CEBRAS_API_KEY, NVIDIA_API_KEY, XIAOMI_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.');
@@ -1393,6 +1444,58 @@ export async function summarizeStory(
     }
 }
 
+function scoreStoryOutput(story: Pick<ProcessedStory, 'summary' | 'discussion_summary'>): number {
+    const summary = (story.summary || '').trim();
+    const discussion = (story.discussion_summary || '').trim();
+
+    let score = 0;
+    if (!isLowQualitySummaryText(summary)) score += 500;
+    if (!isLowQualitySummaryText(discussion)) score += 500;
+
+    score += Math.min(summary.length, 800);
+    score += Math.min(discussion.length, 1200);
+    return score;
+}
+
+export async function summarizeStoryWithFallbacks(
+    story: AlgoliaHit,
+    comments: Comment[],
+    candidates: LLMConfig[],
+    fetcher?: FetchLike,
+    logger?: LLMLogger
+): Promise<ProcessedStory> {
+    if (!Array.isArray(candidates) || candidates.length === 0) {
+        throw new Error('summarizeStoryWithFallbacks requires at least one LLM config candidate');
+    }
+
+    const logInfo = logger?.info || console.log;
+
+    let best: ProcessedStory | null = null;
+    let bestScore = -Infinity;
+
+    for (let i = 0; i < candidates.length; i++) {
+        const config = candidates[i]!;
+        const providerLabel = `${config.provider ?? 'unknown'}:${config.model}`;
+        if (i > 0) {
+            logInfo(`Retrying "${story.title}" (${story.objectID}) with fallback ${providerLabel}`);
+        }
+
+        const next = await summarizeStory(story, comments, config, fetcher, logger);
+        const nextScore = scoreStoryOutput(next);
+
+        if (nextScore > bestScore) {
+            best = next;
+            bestScore = nextScore;
+        }
+
+        if (!needsStoryRepair(next)) {
+            return next;
+        }
+    }
+
+    return best!;
+}
+
 /**
  * Process multiple stories with rate limiting
  * Handles batching, sequential processing, and delays between requests
@@ -1559,11 +1662,177 @@ export function formatDigestMarkdown(digestContent: string, date: string, storyC
     return md;
 }
 
+function getPostTypeFromSummaryLabel(label: string): PostType {
+    const normalized = String(label || '').trim().toLowerCase();
+    if (normalized === 'question') return 'ask_hn';
+    if (normalized === 'project') return 'show_hn';
+    if (normalized === 'post') return 'tell_hn';
+    if (normalized === 'launch') return 'launch_hn';
+    return 'article';
+}
+
+function parseStoryBlock(block: string): ProcessedStory | null {
+    const titleMatch = block.match(/^## \[([^\]]+)\]\(([^)]+)\)/m);
+    const metaMatch = block.match(/\*\*Score:\*\* (\d+) \| \*\*Comments:\*\* (\d+)(?:\s*\|\s*\*\*ID:\*\*\s*(\d+))?/m);
+    const id = metaMatch?.[3]?.trim();
+
+    if (!titleMatch || !metaMatch || !id) return null;
+
+    let summaryLabel = 'Article';
+    const summaryParts: string[] = [];
+    const discussionParts: string[] = [];
+    let section: 'summary' | 'discussion' = 'summary';
+
+    for (const line of block.split('\n')) {
+        if (!line.startsWith('> ')) continue;
+        const content = line.slice(2);
+
+        const summaryLabelMatch = content.match(/^\*\*(Article|Question|Project|Post|Launch):\*\*\s*(.*)$/);
+        if (summaryLabelMatch) {
+            summaryLabel = summaryLabelMatch[1] || summaryLabel;
+            section = 'summary';
+            const initial = (summaryLabelMatch[2] || '').trim();
+            if (initial) summaryParts.push(initial);
+            continue;
+        }
+
+        const discussionMatch = content.match(/^\*\*Discussion:\*\*\s*(.*)$/);
+        if (discussionMatch) {
+            section = 'discussion';
+            const initial = (discussionMatch[1] || '').trim();
+            if (initial) discussionParts.push(initial);
+            continue;
+        }
+
+        if (!content.trim()) {
+            if (section === 'discussion') {
+                discussionParts.push('');
+            } else {
+                summaryParts.push('');
+            }
+            continue;
+        }
+
+        if (section === 'discussion') {
+            discussionParts.push(content);
+        } else {
+            summaryParts.push(content);
+        }
+    }
+
+    return {
+        id,
+        title: titleMatch[1] || '',
+        url: titleMatch[2] || `https://news.ycombinator.com/item?id=${id}`,
+        points: parseInt(metaMatch[1] || '0', 10),
+        num_comments: parseInt(metaMatch[2] || '0', 10),
+        summary: summaryParts.join('\n').trim(),
+        discussion_summary: discussionParts.join('\n').trim(),
+        postType: getPostTypeFromSummaryLabel(summaryLabel)
+    };
+}
+
+export function extractArticleMarkdownStoryBlocks(md: string): ArticleMarkdownStoryBlock[] {
+    const text = String(md || '');
+    const starts: number[] = [];
+    const titlePattern = /^## \[/gm;
+    let match: RegExpExecArray | null;
+
+    while ((match = titlePattern.exec(text)) !== null) {
+        starts.push(match.index);
+    }
+
+    const blocks: ArticleMarkdownStoryBlock[] = [];
+    for (let i = 0; i < starts.length; i++) {
+        const start = starts[i]!;
+        const end = i + 1 < starts.length ? starts[i + 1]! : text.length;
+        const raw = text.slice(start, end);
+        const story = parseStoryBlock(raw);
+        if (!story) continue;
+        blocks.push({ id: story.id, start, end, raw, story });
+    }
+
+    return blocks;
+}
+
+export function parseArticleMarkdownStories(md: string): ProcessedStory[] {
+    return extractArticleMarkdownStoryBlocks(md).map((block) => block.story);
+}
+
+export function formatArticleStoryBlock(story: ProcessedStory): string {
+    const typeLabel = getPostTypeLabel(story.postType);
+    let out = `## [${story.title}](${story.url})\n`;
+    out += `**Score:** ${story.points} | **Comments:** ${story.num_comments} | **ID:** ${story.id}\n\n`;
+    out += `> **${typeLabel}:** ${story.summary}\n>\n`;
+    out += `> **Discussion:** ${story.discussion_summary}\n\n`;
+    out += `---\n\n`;
+    return out;
+}
+
+export function replaceStoriesInArticleMarkdown(
+    md: string,
+    replacements: Map<string, ProcessedStory> | Record<string, ProcessedStory>
+): { markdown: string; updatedIds: string[]; missingIds: string[] } {
+    const replacementMap = replacements instanceof Map
+        ? replacements
+        : new Map(Object.entries(replacements));
+
+    if (replacementMap.size === 0) {
+        return { markdown: md, updatedIds: [], missingIds: [] };
+    }
+
+    const blocks = extractArticleMarkdownStoryBlocks(md);
+    const seen = new Set<string>();
+    const updatedIds: string[] = [];
+
+    let cursor = 0;
+    let output = '';
+
+    for (const block of blocks) {
+        output += md.slice(cursor, block.start);
+
+        const replacement = replacementMap.get(block.id);
+        if (replacement) {
+            output += formatArticleStoryBlock(replacement);
+            seen.add(block.id);
+            updatedIds.push(block.id);
+        } else {
+            output += block.raw;
+        }
+
+        cursor = block.end;
+    }
+
+    output += md.slice(cursor);
+
+    const missingIds = Array.from(replacementMap.keys()).filter((id) => !seen.has(id));
+    return { markdown: output, updatedIds, missingIds };
+}
+
+export function findRepairableStoryIdsInMarkdown(md: string): string[] {
+    return parseArticleMarkdownStories(md)
+        .filter((story) => needsStoryRepair(story))
+        .map((story) => story.id);
+}
+
+export function isDigestMarkdownEmptyOrFailed(md: string): boolean {
+    const text = String(md || '');
+    if (!text.trim()) return true;
+    if (isDigestFailureText(text)) return true;
+
+    const body = text
+        .replace(/^# HN Daily Digest - .*$/m, '')
+        .replace(/\n\n---[\s\S]*$/m, '')
+        .trim();
+
+    return body.length < 40;
+}
+
 // ============================================================================
 // Publication Guardrails (Shared)
 // ============================================================================
 
-export function isStorySummaryFailure(story: ProcessedStory): boolean {
+export function isStorySummaryFailure(story: Pick<ProcessedStory, 'summary' | 'discussion_summary'>): boolean {
     const summary = (story.summary || '').trim();
     const discussion = (story.discussion_summary || '').trim();
 
@@ -1578,6 +1847,10 @@ export function isStorySummaryFailure(story: ProcessedStory): boolean {
     );
 }
 
+export function needsStoryRepair(story: Pick<ProcessedStory, 'summary' | 'discussion_summary'>): boolean {
+    return isStorySummaryFailure(story) || isStorySummaryLowQuality(story);
+}
+
 export function isDigestFailureText(digestContent: string): boolean {
     return /^\s*Digest generation failed/i.test((digestContent || '').trim());
 }
@@ -1588,10 +1861,15 @@ export function countFailuresInArticleMarkdown(md: string): number {
     // > **Discussion:** ...
     // We count failure blocks (not stories) so the metric stays stable even if a single story
     // has multiple failures.
-    const matches = String(md || '').match(
+    const text = String(md || '');
+    const hardFailureMatches = text.match(
         /> \*\*[^*]+:\*\*\s*(?:API error:|Error generating summary\.?|Summary unavailable\.?|Discussion unavailable\.?)/gi
     );
-    return matches ? matches.length : 0;
+    const placeholderMatches = text.match(
+        /> \*\*[^*]+:\*\*\s*(?:\.\.\.|and)\s*$/gim
+    );
+
+    return (hardFailureMatches?.length || 0) + (placeholderMatches?.length || 0);
 }
 
 export function wouldWorsenArticleMarkdown(nextMd: string, prevMd: string): string | null {

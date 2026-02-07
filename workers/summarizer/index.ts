@@ -3,6 +3,7 @@
 import {
     type ProcessedStory,
     type AlgoliaHit,
+    type StoryDetails,
     type LLMEnv,
     fetchTopStories,
     fetchStoryDetails,
@@ -12,18 +13,26 @@ import {
     formatDigestMarkdown,
     getLondonDate,
     parseDateComponents,
-    getPostTypeLabel,
     resolveLLMConfigWithFallback,
     createLLMConfig,
-    isStorySummaryFailure,
+    createLLMConfigCandidates,
+    needsStoryRepair,
     isDigestFailureText,
-    wouldWorsenArticleMarkdown
+    wouldWorsenArticleMarkdown,
+    summarizeStoryWithFallbacks,
+    parseArticleMarkdownStories,
+    replaceStoriesInArticleMarkdown,
+    findRepairableStoryIdsInMarkdown,
+    isDigestMarkdownEmptyOrFailed
 } from '../../shared/summarizer-core';
 
 const MAX_STORY_FAILURES_TO_PUBLISH = 3;
+const MAX_AUTOMATED_REPAIRS_PER_RUN = 3;
+const REPAIR_CRON = '20 */2 * * *';
 
 type CommitOptions = {
     skipIfWorse?: (nextContent: string, existingContent: string) => string | null;
+    existingContent?: string;
 };
 
 type CommitResult = {
@@ -51,6 +60,10 @@ interface Env extends LLMEnv {
 
 export default {
     async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+        if (event.cron === REPAIR_CRON) {
+            ctx.waitUntil(runAutomatedRepair(env));
+            return;
+        }
         ctx.waitUntil(generateDailySummary(env));
     },
 
@@ -71,6 +84,24 @@ export default {
             return new Response("Unauthorized", { status: 401 });
         }
 
+        const mode = (url.searchParams.get('mode') || '').trim().toLowerCase();
+        if (mode === 'repair') {
+            const date = (url.searchParams.get('date') || getLondonDate()).trim();
+            const ids = Array.from(new Set(url.searchParams.getAll('id').map((id) => id.trim()).filter(Boolean)));
+            const maxParam = parseInt(url.searchParams.get('max') || '', 10);
+            const maxRepairs = Number.isFinite(maxParam) && maxParam > 0 ? maxParam : MAX_AUTOMATED_REPAIRS_PER_RUN;
+
+            ctx.waitUntil(
+                repairStoriesForDate(env, {
+                    date,
+                    targetIds: ids.length > 0 ? ids : undefined,
+                    maxRepairs,
+                    reason: 'manual'
+                })
+            );
+            return new Response(`Triggered repair for ${date}${ids.length ? ` (ids=${ids.join(',')})` : ''}.`);
+        }
+
         ctx.waitUntil(generateDailySummary(env));
         return new Response("Triggered summary generation.");
     }
@@ -89,11 +120,9 @@ async function generateDailySummary(env: Env) {
 
     // Create LLM config from environment using shared utility
     let llmConfig;
-    let provider;
     try {
         const result = await resolveLLMConfigWithFallback(env, console);
         llmConfig = result.config;
-        provider = result.provider;
     } catch (e) {
         console.error(`Failed to create LLM config: ${e}`);
         console.error(
@@ -119,7 +148,7 @@ async function generateDailySummary(env: Env) {
     // 3. Process LLM calls with rate limiting using shared function
     const processedStories = await processStoriesWithRateLimit(storyDetails, llmConfig);
 
-    const storyFailureCount = processedStories.filter(isStorySummaryFailure).length;
+    const storyFailureCount = processedStories.filter(needsStoryRepair).length;
     if (storyFailureCount > MAX_STORY_FAILURES_TO_PUBLISH) {
         console.error(
             `⚠️ Too many story summary failures for ${date} (${storyFailureCount}/${processedStories.length}). ` +
@@ -183,6 +212,169 @@ async function generateDailySummary(env: Env) {
     }
 }
 
+type RepairOptions = {
+    date: string;
+    targetIds?: string[];
+    maxRepairs?: number;
+    reason: 'manual' | 'automated';
+};
+
+function buildRepairHit(
+    id: string,
+    existing: ProcessedStory,
+    details: StoryDetails
+): AlgoliaHit {
+    const fallbackUrl = existing.url || `https://news.ycombinator.com/item?id=${id}`;
+    const detailChildren = Array.isArray(details.children) ? details.children : [];
+
+    return {
+        objectID: id,
+        title: details.title || existing.title,
+        url: details.url || fallbackUrl,
+        text: details.text,
+        points: typeof details.points === 'number' ? details.points : existing.points,
+        num_comments: existing.num_comments || detailChildren.length || 0,
+        created_at_i: Math.floor(Date.now() / 1000)
+    };
+}
+
+async function runAutomatedRepair(env: Env): Promise<void> {
+    const date = getLondonDate();
+    console.log(`Running automated repair pass for ${date}`);
+    await repairStoriesForDate(env, {
+        date,
+        maxRepairs: MAX_AUTOMATED_REPAIRS_PER_RUN,
+        reason: 'automated'
+    });
+}
+
+async function repairStoriesForDate(env: Env, options: RepairOptions): Promise<void> {
+    const date = options.date;
+    const { year, month, day } = parseDateComponents(date);
+    const folderPath = `summaries/${year}/${month}`;
+    const articlePath = `${folderPath}/${day}.md`;
+    const digestPath = `${folderPath}/${day}-digest.md`;
+    const maxRepairs = options.maxRepairs || MAX_AUTOMATED_REPAIRS_PER_RUN;
+
+    console.log(`Starting ${options.reason} repair for ${date}`);
+
+    let articleContent: string;
+    let articleSha: string;
+    try {
+        const articleFile = await fetchGitHubFile(env, articlePath);
+        articleContent = articleFile.content;
+        articleSha = articleFile.sha;
+    } catch {
+        console.log(`No article file found for ${date}; skipping repair.`);
+        return;
+    }
+
+    const parsedStories = parseArticleMarkdownStories(articleContent);
+    const storiesById = new Map(parsedStories.map((story) => [story.id, story]));
+
+    let targetIds = Array.from(new Set((options.targetIds || []).map((id) => id.trim()).filter(Boolean)));
+    if (targetIds.length === 0) {
+        targetIds = findRepairableStoryIdsInMarkdown(articleContent).slice(0, maxRepairs);
+    }
+
+    if (targetIds.length === 0) {
+        console.log(`No repairable stories found for ${date}.`);
+    }
+
+    const candidates = createLLMConfigCandidates(env).map((candidate) => candidate.config);
+    const replacements = new Map<string, ProcessedStory>();
+
+    for (const id of targetIds) {
+        const existing = storiesById.get(id);
+        if (!existing) {
+            console.log(`Story ${id} not found in ${articlePath}; skipping.`);
+            continue;
+        }
+
+        try {
+            const details = await fetchStoryDetails(id);
+            const hit = buildRepairHit(id, existing, details);
+            const repaired = await summarizeStoryWithFallbacks(
+                hit,
+                details.children || [],
+                candidates,
+                undefined,
+                console
+            );
+
+            if (needsStoryRepair(repaired)) {
+                console.log(`Story ${id} still low quality after fallback attempts; keeping existing text.`);
+                continue;
+            }
+
+            replacements.set(id, repaired);
+        } catch (error) {
+            console.error(`Failed repairing story ${id}:`, error);
+        }
+    }
+
+    let nextArticleContent = articleContent;
+    if (replacements.size > 0) {
+        const patched = replaceStoriesInArticleMarkdown(articleContent, replacements);
+        nextArticleContent = patched.markdown;
+
+        if (patched.updatedIds.length > 0) {
+            await commitToGitHub(
+                env,
+                articlePath,
+                nextArticleContent,
+                `Repair ${patched.updatedIds.length} article summaries for ${date}`,
+                articleSha,
+                {
+                    existingContent: articleContent,
+                    skipIfWorse: (next, prev) => wouldWorsenArticleMarkdown(next, prev)
+                }
+            );
+        }
+    }
+
+    let digestContent = '';
+    let digestSha: string | undefined;
+    let shouldRepairDigest = true;
+
+    try {
+        const digestFile = await fetchGitHubFile(env, digestPath);
+        digestContent = digestFile.content;
+        digestSha = digestFile.sha;
+        shouldRepairDigest = isDigestMarkdownEmptyOrFailed(digestContent);
+    } catch {
+        shouldRepairDigest = true;
+    }
+
+    if (!shouldRepairDigest) {
+        console.log(`Digest for ${date} is healthy; leaving untouched.`);
+        return;
+    }
+
+    const storiesForDigest = parseArticleMarkdownStories(nextArticleContent);
+    if (storiesForDigest.length === 0) {
+        console.log(`No stories available to regenerate digest for ${date}; skipping digest repair.`);
+        return;
+    }
+
+    const llm = await resolveLLMConfigWithFallback(env, console);
+    const nextDigest = await generateDigest(storiesForDigest, llm.config);
+    if (isDigestFailureText(nextDigest)) {
+        console.error(`Digest regeneration failed for ${date}; keeping existing digest.`);
+        return;
+    }
+
+    const digestMd = formatDigestMarkdown(nextDigest, date, storiesForDigest.length);
+    await commitToGitHub(
+        env,
+        digestPath,
+        digestMd,
+        `Repair digest for ${date}`,
+        digestSha,
+        { existingContent: digestContent }
+    );
+}
+
 // ============================================================================
 // GitHub Functions
 // ============================================================================
@@ -218,7 +410,7 @@ async function commitToGitHub(
 
     // Get existing file info if it exists
     let existingSha: string | undefined = shaOverride;
-    let existingContent: string | undefined;
+    let existingContent: string | undefined = options?.existingContent;
     
     if (!existingSha) {
         try {
