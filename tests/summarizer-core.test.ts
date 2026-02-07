@@ -11,6 +11,7 @@ import {
   scoreComment,
   selectAndFormatComments,
   createLLMConfig,
+  probeLLM,
   resolveLLMConfigWithFallback,
   summarizeStory,
   processStoriesWithRateLimit,
@@ -376,6 +377,30 @@ describe("LLM Configuration", () => {
     expect(result.provider).toBe("Cebras");
     expect(result.usedFallback).toBe(true);
     expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("OpenRouter health check failed"));
+  });
+
+  test("probeLLM accepts OpenRouter reasoning-only health-check responses", async () => {
+    const config: LLMConfig = {
+      apiKey: "openrouter-key",
+      apiUrl: "https://openrouter.ai/api/v1/chat/completions",
+      model: "openrouter/free",
+      provider: "openrouter"
+    };
+
+    const mockFetcher = mock(() => Promise.resolve(new Response(JSON.stringify({
+      choices: [{
+        finish_reason: "length",
+        native_finish_reason: "length",
+        message: {
+          content: "",
+          reasoning: "OK"
+        }
+      }]
+    }), { status: 200 })));
+
+    const result = await probeLLM(config, mockFetcher);
+    expect(result.ok).toBe(true);
+    expect(result.error).toBeUndefined();
   });
 });
 

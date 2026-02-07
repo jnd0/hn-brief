@@ -27,7 +27,7 @@ import {
     buildRepairStoryHit
 } from '../../shared/summarizer-core';
 
-const MAX_STORY_FAILURES_TO_PUBLISH = 3;
+const MAX_STORY_FAILURES_TO_PUBLISH = 12;
 const MAX_AUTOMATED_REPAIRS_PER_RUN = 3;
 const REPAIR_CRON = '20 */2 * * *';
 
@@ -187,8 +187,7 @@ async function generateDailySummary(env: Env) {
 
         let digestPublished = false;
         if (articleCommit.action === 'unchanged' && articleCommit.reason === 'worse') {
-            console.error(`⚠️ Articles would be worse for ${date}; skipping digest and archive update.`);
-            return;
+            console.error(`⚠️ Articles would be worse for ${date}; keeping previous articles and continuing with digest/archive update.`);
         }
 
         if (digestSucceeded) {
@@ -371,13 +370,26 @@ async function fetchGitHubFile(env: Env, path: string): Promise<{ content: strin
     });
     if (!res.ok) throw new Error("File not found");
     const data: any = await res.json();
-    return { content: atob(data.content), sha: data.sha };
+    return { content: decodeBase64Utf8(data.content), sha: data.sha };
 }
 
-function utf8_to_b64(str: string): string {
-    return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g,
-        (match, p1) => String.fromCharCode(parseInt(p1, 16)))
-    );
+function decodeBase64Utf8(content: string): string {
+    const normalized = String(content || '').replace(/\s+/g, '');
+    const binary = atob(normalized);
+    const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+}
+
+function encodeBase64Utf8(content: string): string {
+    const bytes = new TextEncoder().encode(content);
+    let binary = '';
+    const chunkSize = 0x8000;
+
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+
+    return btoa(binary);
 }
 
 async function commitToGitHub(
@@ -402,7 +414,7 @@ async function commitToGitHub(
             if (check.ok) {
                 const data: any = await check.json();
                 existingSha = data.sha;
-                existingContent = atob(data.content);
+                existingContent = decodeBase64Utf8(data.content);
             }
         } catch (e) {
             // File doesn't exist - that's fine, we'll create it
@@ -432,7 +444,7 @@ async function commitToGitHub(
             "Authorization": `token ${env.GITHUB_TOKEN}`,
             "Content-Type": "application/json"
         },
-        body: JSON.stringify({ message, content: utf8_to_b64(content), sha: existingSha })
+        body: JSON.stringify({ message, content: encodeBase64Utf8(content), sha: existingSha })
     });
 
     if (!res.ok) {
@@ -485,5 +497,6 @@ async function updateArchive(env: Env, date: string, storyCount: number, digestS
 }
 
 export const __test__ = {
-    commitToGitHub
+    commitToGitHub,
+    encodeBase64Utf8
 };

@@ -60,7 +60,7 @@ hn-brief/
 ## Environment Variables
 
 Required for LLM summarization:
-- `OPENROUTER_API_KEY` - Preferred LLM provider (default model: `stepfun/step-3.5-flash:free`)
+- `OPENROUTER_API_KEY` - Preferred LLM provider (default model: `openrouter/free`)
 - `OPENROUTER_MODEL` - Override OpenRouter model
 - `CEBRAS_API_KEY` - Fallback LLM provider (default model: `qwen-3-235b-a22b-instruct-2507`)
 - `CEBRAS_API_URL` - Override Cebras API URL
@@ -106,6 +106,8 @@ Comment selection (optional):
 ## Code Duplication Prevention
 
 **CRITICAL**: Avoid duplicating logic between `scripts/summarizer.ts` and `workers/summarizer/index.ts`. Both files perform similar operations but for different environments (local vs Cloudflare Worker).
+
+When adding tests for worker internals, avoid copy-pasting implementation helpers into test files. Prefer exposing test-only helpers through `__test__` exports from the source module and reusing those in tests.
 
 **Common duplication issues:**
 - Story batch processing and rate limiting

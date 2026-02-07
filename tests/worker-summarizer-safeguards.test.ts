@@ -9,6 +9,8 @@ import {
 import { __test__ } from "../workers/summarizer/index";
 
 describe("workers/summarizer safeguards", () => {
+  const toBase64Utf8 = __test__.encodeBase64Utf8;
+
   test("isStorySummaryFailure detects common failure strings", () => {
     expect(
       isStorySummaryFailure({
@@ -143,6 +145,48 @@ describe("workers/summarizer safeguards", () => {
         } as any,
         "summaries/2026/02/04.md",
         "same",
+        "msg"
+      );
+
+      expect(res.action).toBe("unchanged");
+      expect(res.reason).toBe("identical");
+      expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("commitToGitHub compares UTF-8 content without mojibake", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; method: string }> = [];
+    const unicodeText = "Apple's services-first era: low-res PDFs, AI-generated ads, and Apple\u2019s UX decline.";
+    try {
+      globalThis.fetch = (async (url: any, init?: any) => {
+        const method = (init?.method || "GET") as string;
+        calls.push({ url: String(url), method });
+
+        if (method === "GET") {
+          const body = {
+            sha: "sha-prev",
+            content: toBase64Utf8(unicodeText)
+          };
+          return new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+
+        throw new Error("PUT should not be called when UTF-8 content is identical");
+      }) as any;
+
+      const res = await __test__.commitToGitHub(
+        {
+          GITHUB_TOKEN: "x",
+          REPO_OWNER: "o",
+          REPO_NAME: "r"
+        } as any,
+        "summaries/2026/02/06.md",
+        unicodeText,
         "msg"
       );
 
