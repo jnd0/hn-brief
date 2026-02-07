@@ -1090,6 +1090,19 @@ export function isLowQualitySummaryText(text: string): boolean {
     const normalized = normalizeComparableText(text);
     if (!normalized) return true;
 
+    const promptLeakMarkers = [
+        '<content summary>',
+        '<discussion summary>',
+        'you must provide both summaries',
+        'the content summary should',
+        'the discussion summary should',
+        'use exact xml tags',
+        'write like a journalist',
+        'we have an hn article',
+        'now produce xml'
+    ];
+    if (promptLeakMarkers.some((marker) => normalized.includes(marker))) return true;
+
     if (/^[.?!,_\-:;]+$/.test(normalized)) return true;
     if (/^(?:\.{2,}|…+)$/.test(normalized)) return true;
 

@@ -102,6 +102,14 @@ It needs to be over 50 chars so I am typing more words here to ensure it is pick
       expect(isLowQualitySummaryText("A detailed explanation with actual content.")).toBe(false);
     });
 
+    test("isLowQualitySummaryText catches prompt leakage output", () => {
+      expect(
+        isLowQualitySummaryText(
+          "You MUST provide BOTH summaries in exactly this XML format <Content Summary> ... <Discussion Summary>"
+        )
+      ).toBe(true);
+    });
+
     test("needsStoryRepair combines hard failures and placeholders", () => {
       expect(needsStoryRepair({ summary: "API error: 524", discussion_summary: "ok" })).toBe(true);
       expect(needsStoryRepair({ summary: "...", discussion_summary: "Reasonable discussion" })).toBe(true);
