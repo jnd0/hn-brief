@@ -60,7 +60,7 @@ hn-brief/
 ## Environment Variables
 
 Required for LLM summarization:
-- `OPENROUTER_API_KEY` - Preferred LLM provider (default model: `stepfun/step-3.5-flash:free`)
+- `OPENROUTER_API_KEY` - Preferred LLM provider (default model: `openrouter/free`)
 - `OPENROUTER_MODEL` - Override OpenRouter model
 - `CEBRAS_API_KEY` - Fallback LLM provider (default model: `qwen-3-235b-a22b-instruct-2507`)
 - `CEBRAS_API_URL` - Override Cebras API URL

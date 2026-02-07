@@ -108,7 +108,7 @@ const DEFAULT_CEBRAS_URL = "https://api.cerebras.ai/v1/chat/completions";
 // Default only applies when CEBRAS_API_MODEL is not set.
 const DEFAULT_CEBRAS_MODEL = "gpt-oss-120b";
 const DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_OPENROUTER_MODEL = "stepfun/step-3.5-flash:free";
+const DEFAULT_OPENROUTER_MODEL = "openrouter/free";
 const OPENROUTER_CONTENT_FILTER_FALLBACK_MODEL = "arcee-ai/trinity-large-preview:free";
 const DEFAULT_NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
 const DEFAULT_NVIDIA_MODEL = "moonshotai/kimi-k2.5";
@@ -1129,6 +1129,10 @@ export function isStorySummaryLowQuality(story: Pick<ProcessedStory, 'summary' |
 export async function probeLLM(config: LLMConfig, fetcher?: FetchLike): Promise<{ ok: boolean; error?: string }> {
     const isCebras = isCebrasApi(config);
     const isGptOss = isCebras && config.model.startsWith('gpt-oss-');
+    const needsReasoningProbeHeadroom = isOpenRouterApi(config) && (
+        shouldForceOpenRouterReasoning(config) ||
+        config.model === 'openrouter/free'
+    );
 
     const requestBody: Record<string, unknown> = {
         model: config.model,
@@ -1147,8 +1151,8 @@ export async function probeLLM(config: LLMConfig, fetcher?: FetchLike): Promise<
         requestBody.reasoning_effort = config.reasoningEffort;
     }
 
-    // gpt-oss models may emit reasoning before the final "OK"; give a bit more headroom.
-    applyMaxTokens(requestBody, config, isGptOss ? 256 : 32);
+    // Some models may emit reasoning before final text. Keep probe short, but leave enough headroom.
+    applyMaxTokens(requestBody, config, (isGptOss || needsReasoningProbeHeadroom) ? 256 : 32);
 
     // Use Instant Mode for Nvidia NIM to avoid 524 timeout during health check
     applyThinkingMode(requestBody, config, false);
@@ -1203,6 +1207,7 @@ export async function probeLLM(config: LLMConfig, fetcher?: FetchLike): Promise<
         const primary =
             coerceContentToString(message?.content) ||
             coerceContentToString(message?.reasoning_content) ||
+            coerceContentToString((message as any)?.reasoning) ||
             coerceContentToString(message?.refusal) ||
             coerceContentToString(choice?.text) ||
             "";
