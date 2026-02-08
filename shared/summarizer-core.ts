@@ -120,7 +120,34 @@ export const MAX_TOKENS_SUMMARY = 4000;
 export const MAX_TOKENS_DIGEST = MAX_TOKENS_FOR_REASONING;
 const NVIDIA_MAX_TOKENS_SUMMARY = 2500;
 const SUMMARY_TEMPERATURE = 0.6;
+const ARTICLE_TEMPERATURE = 0.4; // Lower temp for more deterministic article summaries
 const SUMMARY_TOP_P = 0.95;
+
+// ============================================================================
+// Task-specific LLM Configuration Helpers
+// ============================================================================
+
+/**
+ * Get config optimized for article summarization (no reasoning, lower temp)
+ */
+export function getArticleConfig(baseConfig: LLMConfig): LLMConfig {
+    return {
+        ...baseConfig,
+        thinking: false,
+        reasoningEffort: undefined // Explicitly disable reasoning for Cebras
+    };
+}
+
+/**
+ * Get config optimized for digest generation (with reasoning, normal temp)
+ */
+export function getDigestConfig(baseConfig: LLMConfig): LLMConfig {
+    return {
+        ...baseConfig,
+        thinking: baseConfig.thinking, // Keep original setting
+        reasoningEffort: baseConfig.reasoningEffort // Keep original setting
+    };
+}
 
 // ============================================================================
 // LLM Configuration Factory
@@ -944,8 +971,6 @@ CRITICAL:
 - Use the exact XML tags shown above (including the forward slash in closing tags)
 - Write in English only. No non-English words or phrases.
 - Output will be parsed programmatically using these specific tags
-- DO NOT output thinking, reasoning, or planning steps
-- DO NOT output phrases like "We need to", "I will", "Let's", or any meta-commentary
 - Begin immediately with <Content Summary> - no preamble, no introductions`;
 }
 
@@ -975,8 +1000,6 @@ CRITICAL STYLE RULES:
 - Start directly with the first story/topic.
 - No bullet points or headers. flowing prose only.
 - Write in English only.
-- DO NOT output thinking, reasoning, or planning steps
-- DO NOT output phrases like "We need to", "I will", "Let's", or any meta-commentary
 - Begin immediately with the first story - no preamble, no introductions`;
 }
 
@@ -1324,20 +1347,23 @@ export async function summarizeStory(
             ? resolveThinkingParams(config, false)
             : null;
 
+        // For articles: use lower temperature for more deterministic output, no reasoning
+        const isArticleMode = config.thinking === false;
         const requestBody: Record<string, unknown> = {
             model: config.model,
             messages: [
                 { role: "system", content: "You are a helpful assistant summarizing Hacker News." },
                 { role: "user", content: prompt }
             ],
-            temperature: thinkingParams ? thinkingParams.temperature : SUMMARY_TEMPERATURE,
+            temperature: isArticleMode ? ARTICLE_TEMPERATURE : (thinkingParams ? thinkingParams.temperature : SUMMARY_TEMPERATURE),
             top_p: thinkingParams ? thinkingParams.topP : SUMMARY_TOP_P
         };
 
         // Encourage early termination once both blocks are produced.
         requestBody.stop = ["</Discussion Summary>"];
 
-        if (isCebrasApi(config) && config.reasoningEffort) {
+        // Only send reasoning_effort for Cebras if explicitly set (not for articles)
+        if (isCebrasApi(config) && config.reasoningEffort && !isArticleMode) {
             requestBody.reasoning_effort = config.reasoningEffort;
         }
         const maxTokens = isNvidiaApi(config) ? NVIDIA_MAX_TOKENS_SUMMARY : MAX_TOKENS_SUMMARY;
@@ -1517,7 +1543,9 @@ export async function summarizeStoryWithFallbacks(
             logInfo(`Retrying "${story.title}" (${story.objectID}) with fallback ${providerLabel}`);
         }
 
-        const next = await summarizeStory(story, comments, config, fetcher, logger);
+        // Use article-optimized config for each attempt
+        const articleConfig = getArticleConfig(config);
+        const next = await summarizeStory(story, comments, articleConfig, fetcher, logger);
         const nextScore = scoreStoryOutput(next);
 
         if (nextScore > bestScore) {
@@ -1570,16 +1598,19 @@ export async function processStoriesWithRateLimit(
         const batchNum = Math.floor(i / batchSize) + 1;
         logInfo(`${indent}Processing batch ${batchNum}/${totalBatches} (${batch.length} stories)...`);
 
+        // Use article-optimized config (no reasoning, lower temperature)
+        const articleConfig = getArticleConfig(llmConfig);
+        
         if (isNvidia) {
             // Nvidia NIM is typically latency-bound. Run each batch in parallel to fit within cron time limits.
             const results = await Promise.all(
-                batch.map(({ hit, details }) => summarizeStory(hit, details.children || [], llmConfig, fetcher, logger))
+                batch.map(({ hit, details }) => summarizeStory(hit, details.children || [], articleConfig, fetcher, logger))
             );
             processedStories.push(...results);
         } else {
             // Process sequentially with delay between each
             for (const { hit, details } of batch) {
-                const summary = await summarizeStory(hit, details.children || [], llmConfig, fetcher, logger);
+                const summary = await summarizeStory(hit, details.children || [], articleConfig, fetcher, logger);
                 processedStories.push(summary);
 
                 // Small delay between stories to avoid overwhelming API
