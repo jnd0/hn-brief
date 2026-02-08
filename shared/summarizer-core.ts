@@ -943,7 +943,10 @@ CRITICAL:
 - BOTH sections are REQUIRED - never omit Discussion Summary
 - Use the exact XML tags shown above (including the forward slash in closing tags)
 - Write in English only. No non-English words or phrases.
-- Output will be parsed programmatically using these specific tags`;
+- Output will be parsed programmatically using these specific tags
+- DO NOT output thinking, reasoning, or planning steps
+- DO NOT output phrases like "We need to", "I will", "Let's", or any meta-commentary
+- Begin immediately with <Content Summary> - no preamble, no introductions`;
 }
 
 /**
@@ -971,7 +974,10 @@ CRITICAL STYLE RULES:
 - NO generic intros like "Today on Hacker News..."
 - Start directly with the first story/topic.
 - No bullet points or headers. flowing prose only.
-- Write in English only.`;
+- Write in English only.
+- DO NOT output thinking, reasoning, or planning steps
+- DO NOT output phrases like "We need to", "I will", "Let's", or any meta-commentary
+- Begin immediately with the first story - no preamble, no introductions`;
 }
 
 // ============================================================================
