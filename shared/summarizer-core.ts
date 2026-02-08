@@ -1437,6 +1437,19 @@ export async function summarizeStory(
 
         const parsed = parseSummaryResponse(content);
 
+        // Log if we got placeholder content like "..."
+        if (parsed.summary === '...' || parsed.discussion === '...' || 
+            parsed.summary === 'and' || parsed.discussion === 'and') {
+            const providerLabel = `${config.provider ?? 'unknown'}:${config.model}`;
+            const reason = finishReason ? ` finish_reason=${finishReason}` : '';
+            logError(
+                `Placeholder content detected for "${story.title}" (${story.objectID}) [${providerLabel}]${reason}\n` +
+                `Raw content preview: ${JSON.stringify(content.slice(0, 500))}\n` +
+                `Parsed summary: ${JSON.stringify(parsed.summary.slice(0, 100))}\n` +
+                `Parsed discussion: ${JSON.stringify(parsed.discussion.slice(0, 100))}`
+            );
+        }
+
         return {
             id: story.objectID,
             title: story.title,
@@ -1931,9 +1944,18 @@ export function countFailuresInArticleMarkdown(md: string): number {
     return (hardFailureMatches?.length || 0) + (placeholderMatches?.length || 0);
 }
 
+const MAX_ACCEPTABLE_FAILURES = 10;
+
 export function wouldWorsenArticleMarkdown(nextMd: string, prevMd: string): string | null {
     const nextFailures = countFailuresInArticleMarkdown(nextMd);
     const prevFailures = countFailuresInArticleMarkdown(prevMd);
+    
+    // Allow up to MAX_ACCEPTABLE_FAILURES total failures
+    if (nextFailures > MAX_ACCEPTABLE_FAILURES) {
+        return `failure count exceeds maximum (${nextFailures} > ${MAX_ACCEPTABLE_FAILURES})`;
+    }
+    
+    // Otherwise only block if strictly worsening from previous
     return nextFailures > prevFailures ? `would worsen failure count (${prevFailures} -> ${nextFailures})` : null;
 }
 
