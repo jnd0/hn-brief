@@ -1925,7 +1925,7 @@ export function countFailuresInArticleMarkdown(md: string): number {
         /> \*\*[^*]+:\*\*\s*(?:API error:|Error generating summary\.?|Summary unavailable\.?|Discussion unavailable\.?)/gi
     );
     const placeholderMatches = text.match(
-        /> \*\*[^*]+:\*\*\s*(?:\.\.\.|and)\s*$/gim
+        /> \*\*[^*]+:\*\*\s+(?:\.\.\.|and)\s*$/gim
     );
 
     return (hardFailureMatches?.length || 0) + (placeholderMatches?.length || 0);
