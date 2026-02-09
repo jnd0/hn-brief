@@ -1381,7 +1381,10 @@ export async function summarizeStory(
         let finishReason: string | undefined;
         try {
             const controller = new AbortController();
-            const timeoutMs = isNvidiaApi(config) ? 90000 : 60000;
+            // Only apply strict timeouts for Nvidia (90s) and gpt-oss-120b (60s)
+            // Other providers (OpenRouter, Cebras non-gpt-oss) get 5 minutes
+            const isGptOss = isCebrasApi(config) && config.model.startsWith('gpt-oss-');
+            const timeoutMs = isNvidiaApi(config) ? 90000 : (isGptOss ? 60000 : 300000);
             const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
             try {
                 // Avoid streaming (keeps Worker CPU lower); rely on stop sequences + timeouts instead.
