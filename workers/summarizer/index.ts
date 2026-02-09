@@ -29,7 +29,7 @@ import {
 
 const MAX_STORY_FAILURES_TO_PUBLISH = 12;
 const MAX_AUTOMATED_REPAIRS_PER_RUN = 3;
-const REPAIR_CRON = '20 */2 * * *';
+const REPAIR_CRON = '20 */4 * * *';
 
 type CommitOptions = {
     skipIfWorse?: (nextContent: string, existingContent: string) => string | null;

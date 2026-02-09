@@ -5,8 +5,8 @@
     "compatibility_date": "2025-01-01",
     "triggers": {
         "crons": [
-            "0 */2 * * *",
-            "20 */2 * * *"
+            "0 */4 * * *",
+            "20 */4 * * *"
         ]
     },
     "observability": {

@@ -1380,16 +1380,24 @@ export async function summarizeStory(
         let content = "";
         let finishReason: string | undefined;
         try {
-            const controller = new AbortController();
             // Only apply strict timeouts for Nvidia (90s) and gpt-oss-120b (60s)
-            // Other providers (OpenRouter, Cebras non-gpt-oss) get 5 minutes
+            // Other providers (OpenRouter, Cebras non-gpt-oss) have no timeout
             const isGptOss = isCebrasApi(config) && config.model.startsWith('gpt-oss-');
-            const timeoutMs = isNvidiaApi(config) ? 90000 : (isGptOss ? 60000 : 300000);
-            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+            const needsTimeout = isNvidiaApi(config) || isGptOss;
+            
+            let controller: AbortController | undefined;
+            let timeoutId: ReturnType<typeof setTimeout> | undefined;
+            
+            if (needsTimeout) {
+                controller = new AbortController();
+                const timeoutMs = isNvidiaApi(config) ? 90000 : 60000;
+                timeoutId = setTimeout(() => controller!.abort(), timeoutMs);
+            }
+            
             try {
                 // Avoid streaming (keeps Worker CPU lower); rely on stop sequences + timeouts instead.
                 const meta = await fetchCompletionWithMeta(config.apiUrl, config.apiKey, requestBody, fetcher, {
-                    signal: controller.signal
+                    signal: controller?.signal
                 });
                 content = meta.content;
                 finishReason = meta.finishReason || meta.nativeFinishReason;
@@ -1406,11 +1414,13 @@ export async function summarizeStory(
                         const retryBody = { ...requestBody, model: OPENROUTER_CONTENT_FILTER_FALLBACK_MODEL };
                         const retryMeta = await fetchCompletionWithMeta(config.apiUrl, config.apiKey, retryBody, fetcher);
                         content = retryMeta.content;
-                        finishReason = retryMeta.finishReason || retryMeta.nativeFinishReason;
+                        finishReason = retryMeta.finishReason || meta.nativeFinishReason;
                     }
                 }
             } finally {
-                clearTimeout(timeoutId);
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                }
             }
         } catch (apiError: any) {
             const errorMessage = getErrorMessage(apiError);
@@ -1674,27 +1684,35 @@ export async function generateDigest(
 
         applyThinkingMode(requestBody, config, Boolean(thinkingParams?.thinking));
 
-        const controller = new AbortController();
-        const timeoutMs = isNvidiaApi(config) ? 210000 : 120000;
-        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        // Only apply timeout for Nvidia (210s), other providers have no timeout
+        const needsTimeout = isNvidiaApi(config);
+        let controller: AbortController | undefined;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        
+        if (needsTimeout) {
+            controller = new AbortController();
+            timeoutId = setTimeout(() => controller!.abort(), 210000);
+        }
+        
         try {
-            // Avoid streaming here as well; use a longer timeout for digest.
             const content = (await fetchCompletionWithMeta(config.apiUrl, config.apiKey, requestBody, fetcher, {
-                signal: controller.signal
+                signal: controller?.signal
             })).content;
 
             return content || "Digest generation failed (empty content).";
         } catch (apiError: any) {
             const providerLabel = `${config.provider ?? 'unknown'}:${config.model}`;
-            if (controller.signal.aborted) {
-                console.error(`Digest API timeout [${providerLabel}] after ${timeoutMs}ms`);
+            if (controller?.signal.aborted) {
+                console.error(`Digest API timeout [${providerLabel}] after 210000ms`);
                 return "Digest generation failed due to API timeout.";
             }
             const errorMessage = getErrorMessage(apiError);
             console.error(`Digest API error [${providerLabel}]: ${errorMessage}`);
             return "Digest generation failed due to API error.";
         } finally {
-            clearTimeout(timeoutId);
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
         }
 
     } catch (e) {
@@ -1988,15 +2006,13 @@ const MAX_ACCEPTABLE_FAILURES = 10;
 
 export function wouldWorsenArticleMarkdown(nextMd: string, prevMd: string): string | null {
     const nextFailures = countFailuresInArticleMarkdown(nextMd);
-    const prevFailures = countFailuresInArticleMarkdown(prevMd);
     
-    // Allow up to MAX_ACCEPTABLE_FAILURES total failures
+    // Allow up to MAX_ACCEPTABLE_FAILURES total failures, regardless of previous count
     if (nextFailures > MAX_ACCEPTABLE_FAILURES) {
         return `failure count exceeds maximum (${nextFailures} > ${MAX_ACCEPTABLE_FAILURES})`;
     }
     
-    // Otherwise only block if strictly worsening from previous
-    return nextFailures > prevFailures ? `would worsen failure count (${prevFailures} -> ${nextFailures})` : null;
+    return null;
 }
 
 // ============================================================================
