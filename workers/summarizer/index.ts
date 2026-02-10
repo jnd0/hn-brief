@@ -149,14 +149,12 @@ async function generateDailySummary(env: Env) {
         const top20 = stories.slice(0, 20);
 
         // 2. Fetch all story details in PARALLEL
-        console.log(`Fetching ${top20.length} story details in parallel...`);
         const storyDetails = await timeStep('Fetch story details', () => Promise.all(
             top20.map(async (hit: AlgoliaHit) => {
                 const details = await fetchStoryDetails(hit.objectID);
                 return { hit, details };
             })
         ));
-        console.log(`Fetched all story details.`);
 
         // 3. Process LLM calls with rate limiting using shared function
         const processedStories = await timeStep('Summarize stories', () => processStoriesWithRateLimit(storyDetails, llmConfig));

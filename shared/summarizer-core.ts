@@ -728,9 +728,9 @@ function analyzeCommentNode(
     };
     meta.score = scoreComment(meta);
 
-    // weightedSubtreeCount = sum(1 + descendantCount) for all nodes in this subtree.
-    // Needed so parents can reproduce the current descendantCount behavior without re-scanning child metadata.
-    const weightedSubtreeCount = (1 + descendantCount) + childWeightedSum;
+    // Parent descendantCount logic expects this value to be (1 + child.descendantCount)
+    // for each direct child so parent can sum child weighted counts in one pass.
+    const weightedSubtreeCount = 1 + descendantCount;
 
     return {
         metadata: [meta, ...childMetadata],
