@@ -112,66 +112,76 @@ export default {
 // Main Summary Generation
 // ============================================================================
 
+async function timeStep<T>(label: string, operation: () => Promise<T> | T): Promise<T> {
+    const start = Date.now();
+    try {
+        return await operation();
+    } finally {
+        const elapsedMs = Date.now() - start;
+        console.log(`⏱️ ${label}: ${elapsedMs}ms`);
+    }
+}
+
 async function generateDailySummary(env: Env) {
     // Use London timezone for date calculation
     const date = getLondonDate();
     const { year, month, day } = parseDateComponents(date);
+    const runStart = Date.now();
 
     console.log(`Generating summary for ${date}`);
 
-    // Create LLM config from environment using shared utility
-    let llmConfig;
     try {
-        const result = await resolveLLMConfigWithFallback(env, console);
-        llmConfig = result.config;
-    } catch (e) {
-        console.error(`Failed to create LLM config: ${e}`);
-        console.error(
-            `Available env keys: CEBRAS_API_KEY=${!!env.CEBRAS_API_KEY}, NVIDIA_API_KEY=${!!env.NVIDIA_API_KEY}, XIAOMI_API_KEY=${!!env.XIAOMI_API_KEY}, OPENROUTER_API_KEY=${!!env.OPENROUTER_API_KEY}, OPENAI_API_KEY=${!!env.OPENAI_API_KEY}`
-        );
-        throw e;
-    }
+        // Create LLM config from environment using shared utility
+        let llmConfig;
+        try {
+            const result = await timeStep('Resolve LLM config', () => resolveLLMConfigWithFallback(env, console));
+            llmConfig = result.config;
+        } catch (e) {
+            console.error(`Failed to create LLM config: ${e}`);
+            console.error(
+                `Available env keys: CEBRAS_API_KEY=${!!env.CEBRAS_API_KEY}, NVIDIA_API_KEY=${!!env.NVIDIA_API_KEY}, XIAOMI_API_KEY=${!!env.XIAOMI_API_KEY}, OPENROUTER_API_KEY=${!!env.OPENROUTER_API_KEY}, OPENAI_API_KEY=${!!env.OPENAI_API_KEY}`
+            );
+            throw e;
+        }
 
-    // 1. Fetch Stories (top 20 by points)
-    const stories = await fetchTopStories();
-    const top20 = stories.slice(0, 20);
+        // 1. Fetch Stories (top 20 by points)
+        const stories = await timeStep('Fetch top stories', () => fetchTopStories());
+        const top20 = stories.slice(0, 20);
 
-    // 2. Fetch all story details in PARALLEL
-    console.log(`Fetching ${top20.length} story details in parallel...`);
-    const storyDetails = await Promise.all(
-        top20.map(async (hit: AlgoliaHit) => {
-            const details = await fetchStoryDetails(hit.objectID);
-            return { hit, details };
-        })
-    );
-    console.log(`Fetched all story details.`);
+        // 2. Fetch all story details in PARALLEL
+        const storyDetails = await timeStep('Fetch story details', () => Promise.all(
+            top20.map(async (hit: AlgoliaHit) => {
+                const details = await fetchStoryDetails(hit.objectID);
+                return { hit, details };
+            })
+        ));
 
-    // 3. Process LLM calls with rate limiting using shared function
-    const processedStories = await processStoriesWithRateLimit(storyDetails, llmConfig);
+        // 3. Process LLM calls with rate limiting using shared function
+        const processedStories = await timeStep('Summarize stories', () => processStoriesWithRateLimit(storyDetails, llmConfig));
 
-    const storyFailureCount = processedStories.filter(needsStoryRepair).length;
-    if (storyFailureCount > MAX_STORY_FAILURES_TO_PUBLISH) {
-        console.error(
-            `⚠️ Too many story summary failures for ${date} (${storyFailureCount}/${processedStories.length}). ` +
-            `Skipping GitHub updates to avoid overwriting good summaries.`
-        );
-        return;
-    }
+        const storyFailureCount = processedStories.filter(needsStoryRepair).length;
+        if (storyFailureCount > MAX_STORY_FAILURES_TO_PUBLISH) {
+            console.error(
+                `⚠️ Too many story summary failures for ${date} (${storyFailureCount}/${processedStories.length}). ` +
+                `Skipping GitHub updates to avoid overwriting good summaries.`
+            );
+            return;
+        }
 
-    // 4. Generate Markdown using shared formatters
-    const articleMd = formatArticleMarkdown(processedStories, date);
-    
-    // Wait before generating digest to avoid rate limits
-    console.log(`⏳ Waiting 5s before generating digest...`);
-    await new Promise(r => setTimeout(r, 5000));
-    
-    const digestContent = await generateDigest(processedStories, llmConfig);
-    const digestMd = formatDigestMarkdown(digestContent, date, processedStories.length);
-    const digestSucceeded = !isDigestFailureText(digestContent);
+        // 4. Generate Markdown using shared formatters
+        const articleMd = await timeStep('Format article markdown', () => formatArticleMarkdown(processedStories, date));
 
-    // 5. Commit both files to GitHub
-    const folderPath = `summaries/${year}/${month}`;
-    try {
+        // Wait before generating digest to avoid rate limits
+        console.log(`⏳ Waiting 5s before generating digest...`);
+        await new Promise(r => setTimeout(r, 5000));
+
+        const digestContent = await timeStep('Generate digest', () => generateDigest(processedStories, llmConfig));
+        const digestMd = await timeStep('Format digest markdown', () => formatDigestMarkdown(digestContent, date, processedStories.length));
+        const digestSucceeded = !isDigestFailureText(digestContent);
+
+        // 5. Commit both files to GitHub
+        const folderPath = `summaries/${year}/${month}`;
+
         const articleCommit = await commitToGitHub(
             env,
             `${folderPath}/${day}.md`,
@@ -209,6 +219,9 @@ async function generateDailySummary(env: Env) {
     } catch (error) {
         console.error(`❌ Failed to commit files for ${date}:`, error);
         throw error; // Re-throw to ensure Worker reports failure
+    } finally {
+        const totalElapsedMs = Date.now() - runStart;
+        console.log(`⏱️ Total summary run for ${date}: ${totalElapsedMs}ms`);
     }
 }
 
