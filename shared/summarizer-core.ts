@@ -1202,7 +1202,8 @@ export async function probeLLM(config: LLMConfig, fetcher?: FetchLike): Promise<
     const _fetch = fetcher || fetch;
     const controller = new AbortController();
     // Fail fast: health checks are just to validate basic config.
-    const timeoutMs = isNvidiaApi(config) ? 30000 : 15000;
+    // OpenRouter free models can be slow, so give them more time
+    const timeoutMs = isNvidiaApi(config) ? 30000 : (isOpenRouterApi(config) ? 60000 : 15000);
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
