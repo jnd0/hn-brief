@@ -82,6 +82,7 @@ export interface CommentMetadata {
     descendantCount: number;
     directReplyCount: number;
     textLength: number;           // HTML-stripped length
+    strippedText?: string;        // Cached stripped text for formatting
     uniqueAuthorCount: number;
     rootId: string;               // ID of top-level ancestor
     parentId: string | null;
@@ -639,14 +640,103 @@ function stripHtml(text: string): string {
         .trim();
 }
 
+function getStrippedCommentText(text: string, cache: Map<string, string>): string {
+    const key = String(text || '');
+    const cached = cache.get(key);
+    if (cached !== undefined) {
+        return cached;
+    }
+
+    const stripped = stripHtml(key);
+    cache.set(key, stripped);
+    return stripped;
+}
+
 /**
  * Check if a comment should be skipped (deleted or empty)
  */
-function shouldSkipComment(comment: Comment): boolean {
+function shouldSkipComment(comment: Comment, strippedText?: string): boolean {
     if (!comment.text) return true;
-    const stripped = stripHtml(comment.text);
+    const stripped = strippedText ?? stripHtml(comment.text);
     if (!stripped || stripped === '[deleted]' || stripped === '[dead]') return true;
     return false;
+}
+
+type AnalyzedCommentSubtree = {
+    metadata: CommentMetadata[];
+    weightedSubtreeCount: number;
+    authors: Set<string>;
+};
+
+function analyzeCommentNode(
+    comment: Comment,
+    depth: number,
+    rootId: string | null,
+    parentId: string | null,
+    textCache: Map<string, string>
+): AnalyzedCommentSubtree | null {
+    if (!comment.text) {
+        return null;
+    }
+
+    const strippedText = getStrippedCommentText(comment.text, textCache);
+    if (shouldSkipComment(comment, strippedText)) {
+        return null;
+    }
+
+    const currentRootId = rootId ?? comment.id;
+    const children = comment.children || [];
+    const childMetadata: CommentMetadata[] = [];
+    const authors = new Set<string>([comment.author]);
+
+    let directReplyCount = 0;
+    let childWeightedSum = 0;
+
+    for (const child of children) {
+        const analyzedChild = analyzeCommentNode(
+            child,
+            depth + 1,
+            currentRootId,
+            comment.id,
+            textCache
+        );
+        if (!analyzedChild) continue;
+
+        directReplyCount++;
+        childWeightedSum += analyzedChild.weightedSubtreeCount;
+        childMetadata.push(...analyzedChild.metadata);
+
+        for (const author of analyzedChild.authors) {
+            authors.add(author);
+        }
+    }
+
+    // Keep descendant count behavior consistent with existing scoring logic.
+    const descendantCount = childWeightedSum;
+
+    const meta: CommentMetadata = {
+        comment,
+        depth,
+        descendantCount,
+        directReplyCount,
+        textLength: strippedText.length,
+        strippedText,
+        uniqueAuthorCount: authors.size,
+        rootId: currentRootId,
+        parentId,
+        score: 0
+    };
+    meta.score = scoreComment(meta);
+
+    // weightedSubtreeCount = sum(1 + descendantCount) for all nodes in this subtree.
+    // Needed so parents can reproduce the current descendantCount behavior without re-scanning child metadata.
+    const weightedSubtreeCount = (1 + descendantCount) + childWeightedSum;
+
+    return {
+        metadata: [meta, ...childMetadata],
+        weightedSubtreeCount,
+        authors
+    };
 }
 
 /**
@@ -675,51 +765,12 @@ function analyzeCommentTree(
     parentId: string | null = null
 ): CommentMetadata[] {
     const results: CommentMetadata[] = [];
+    const textCache = new Map<string, string>();
 
     for (const comment of comments) {
-        if (shouldSkipComment(comment)) continue;
-
-        const currentRootId = rootId ?? comment.id;
-        const children = comment.children || [];
-
-        // Recursively analyze children first
-        const childMetadata = analyzeCommentTree(
-            children,
-            depth + 1,
-            currentRootId,
-            comment.id
-        );
-
-        // Compute statistics
-        const descendantCount = childMetadata.reduce(
-            (sum, m) => sum + 1 + m.descendantCount,
-            0
-        );
-        const directReplyCount = children.filter(c => !shouldSkipComment(c)).length;
-        const textLength = stripHtml(comment.text).length;
-
-        // Count unique authors in subtree
-        const authors = new Set<string>([comment.author]);
-        for (const m of childMetadata) {
-            authors.add(m.comment.author);
-        }
-        const uniqueAuthorCount = authors.size;
-
-        const meta: CommentMetadata = {
-            comment,
-            depth,
-            descendantCount,
-            directReplyCount,
-            textLength,
-            uniqueAuthorCount,
-            rootId: currentRootId,
-            parentId,
-            score: 0 // Will be computed below
-        };
-        meta.score = scoreComment(meta);
-
-        results.push(meta);
-        results.push(...childMetadata);
+        const analyzed = analyzeCommentNode(comment, depth, rootId, parentId, textCache);
+        if (!analyzed) continue;
+        results.push(...analyzed.metadata);
     }
 
     return results;
@@ -757,7 +808,8 @@ function buildAncestorChain(
 function formatComment(
     comment: Comment,
     ancestors: Comment[],
-    replies: Comment[]
+    replies: Comment[],
+    strippedTextById: Map<string, string>
 ): string {
     let result = '';
 
@@ -766,18 +818,20 @@ function formatComment(
         const ancestor = ancestors[i];
         if (!ancestor) continue;
         const ancestorIndent = '  '.repeat(i);
-        const ancestorText = stripHtml(ancestor.text).slice(0, 150);
+        const ancestorText = (strippedTextById.get(ancestor.id) || '').slice(0, 150);
         result += `${ancestorIndent}[context] ${ancestor.author}: ${ancestorText}...\n`;
     }
 
     // Add main comment
     const mainIndent = '  '.repeat(ancestors.length);
-    result += `${mainIndent}- ${comment.author}: ${stripHtml(comment.text)}\n`;
+    const mainText = strippedTextById.get(comment.id) || '';
+    result += `${mainIndent}- ${comment.author}: ${mainText}\n`;
 
     // Add best replies
     for (const reply of replies) {
         const replyIndent = '  '.repeat(ancestors.length + 1);
-        result += `${replyIndent}- ${reply.author}: ${stripHtml(reply.text)}\n`;
+        const replyText = strippedTextById.get(reply.id) || '';
+        result += `${replyIndent}- ${reply.author}: ${replyText}\n`;
     }
 
     return result;
@@ -822,12 +876,23 @@ export function selectAndFormatComments(
 
     // Pre-build indexes for O(1) lookups
     const metaById = new Map(allMetadata.map(m => [m.comment.id, m]));
-    const childrenByParentId = new Map<string, CommentMetadata[]>();
+    const strippedTextById = new Map(allMetadata.map((m) => [
+        m.comment.id,
+        m.strippedText ?? stripHtml(m.comment.text)
+    ]));
+    const topRepliesByParentId = new Map<string, [CommentMetadata | undefined, CommentMetadata | undefined]>();
+
     for (const m of allMetadata) {
-        if (m.parentId) {
-            const siblings = childrenByParentId.get(m.parentId) || [];
-            siblings.push(m);
-            childrenByParentId.set(m.parentId, siblings);
+        if (!m.parentId) continue;
+
+        const [first, second] = topRepliesByParentId.get(m.parentId) || [undefined, undefined];
+        if (!first || m.score > first.score) {
+            topRepliesByParentId.set(m.parentId, [m, first]);
+            continue;
+        }
+
+        if (!second || m.score > second.score) {
+            topRepliesByParentId.set(m.parentId, [first, m]);
         }
     }
 
@@ -838,14 +903,15 @@ export function selectAndFormatComments(
             : [];
 
         // Get best 1-2 replies using pre-built index
-        const children = childrenByParentId.get(meta.comment.id) || [];
-        const replies = children
-            .sort((a, b) => b.score - a.score)
-            .slice(0, 2)
-            .map(m => m.comment);
+        const topReplies = topRepliesByParentId.get(meta.comment.id) || [];
+        const replies: Comment[] = [];
+        for (const reply of topReplies) {
+            if (!reply) continue;
+            replies.push(reply.comment);
+        }
 
         // Format this comment thread
-        const formatted = formatComment(meta.comment, ancestors, replies);
+        const formatted = formatComment(meta.comment, ancestors, replies, strippedTextById);
 
         // Check budget
         if (result.length + formatted.length > options.maxChars) {
