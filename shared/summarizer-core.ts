@@ -82,7 +82,6 @@ export interface CommentMetadata {
     descendantCount: number;
     directReplyCount: number;
     textLength: number;           // HTML-stripped length
-    strippedText?: string;        // Cached stripped text for formatting
     uniqueAuthorCount: number;
     rootId: string;               // ID of top-level ancestor
     parentId: string | null;
@@ -93,6 +92,8 @@ export interface CommentMetadata {
 export interface CommentSelectionOptions {
     maxChars: number;    // Budget on formatted output
     perRootCap: number;  // Max comments from same top-level thread
+    maxAnalyzedComments?: number; // Max comment nodes to score per story
+    maxDepth?: number;   // Max reply depth to traverse (0 = top-level)
 }
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -627,12 +628,26 @@ const MAX_COMMENT_CHARS = typeof process !== 'undefined'
 const MAX_COMMENTS_PER_ROOT = typeof process !== 'undefined'
     ? parseInt(process.env?.MAX_COMMENTS_PER_ROOT || '3', 10)
     : 3;
+const MAX_ANALYZED_COMMENTS_PER_STORY = typeof process !== 'undefined'
+    ? parseInt(process.env?.MAX_ANALYZED_COMMENTS_PER_STORY || '500', 10)
+    : 500;
+const MAX_COMMENT_DEPTH = typeof process !== 'undefined'
+    ? parseInt(process.env?.MAX_COMMENT_DEPTH || '6', 10)
+    : 6;
 
 /**
  * Strip HTML tags from text for accurate length scoring
  */
 function stripHtml(text: string): string {
-    return text
+    const value = String(text || '');
+    if (!value) return '';
+
+    // Fast path for plain text comments.
+    if (!value.includes('<') && !value.includes('&')) {
+        return value.trim();
+    }
+
+    return value
         .replace(/<[^>]*>/g, '')           // Remove HTML tags
         .replace(/&[a-z]+;/gi, ' ')        // Replace HTML entities with space
         .replace(/&#x[0-9a-f]+;/gi, ' ')   // Replace hex entities
@@ -640,16 +655,19 @@ function stripHtml(text: string): string {
         .trim();
 }
 
-function getStrippedCommentText(text: string, cache: Map<string, string>): string {
-    const key = String(text || '');
-    const cached = cache.get(key);
-    if (cached !== undefined) {
-        return cached;
+function stripHtmlForScoring(text: string): string {
+    const value = String(text || '');
+    if (!value) return '';
+    if (!value.includes('<')) {
+        return value.trim();
     }
+    return value.replace(/<[^>]*>/g, ' ').trim();
+}
 
-    const stripped = stripHtml(key);
-    cache.set(key, stripped);
-    return stripped;
+function isSkippedCommentText(strippedText: string): boolean {
+    if (!strippedText) return true;
+    const normalized = strippedText.toLowerCase();
+    return normalized === '[deleted]' || normalized === '[dead]';
 }
 
 /**
@@ -657,120 +675,179 @@ function getStrippedCommentText(text: string, cache: Map<string, string>): strin
  */
 function shouldSkipComment(comment: Comment, strippedText?: string): boolean {
     if (!comment.text) return true;
-    const stripped = strippedText ?? stripHtml(comment.text);
-    if (!stripped || stripped === '[deleted]' || stripped === '[dead]') return true;
+    const stripped = strippedText ?? stripHtmlForScoring(comment.text);
+    if (isSkippedCommentText(stripped)) return true;
     return false;
 }
 
-type AnalyzedCommentSubtree = {
-    metadata: CommentMetadata[];
-    weightedSubtreeCount: number;
-    authors: Set<string>;
+type CommentAnalysisState = {
+    analyzedCount: number;
+    maxAnalyzedComments: number;
+    maxDepth: number;
 };
 
-function analyzeCommentNode(
-    comment: Comment,
-    depth: number,
-    rootId: string | null,
-    parentId: string | null,
-    textCache: Map<string, string>
-): AnalyzedCommentSubtree | null {
-    if (!comment.text) {
-        return null;
+type AnalyzeAggregate = {
+    comment: Comment;
+    depth: number;
+    rootId: string;
+    parentId: string | null;
+    textLength: number;
+    childMetadata: CommentMetadata[];
+    directReplyCount: number;
+    childWeightedSum: number;
+    parent?: AnalyzeAggregate;
+};
+
+type AnalyzeFrame =
+    | {
+        kind: 'enter';
+        comment: Comment;
+        depth: number;
+        rootId: string | null;
+        parentId: string | null;
+        parentAgg?: AnalyzeAggregate;
     }
-
-    const strippedText = getStrippedCommentText(comment.text, textCache);
-    if (shouldSkipComment(comment, strippedText)) {
-        return null;
-    }
-
-    const currentRootId = rootId ?? comment.id;
-    const children = comment.children || [];
-    const childMetadata: CommentMetadata[] = [];
-    const authors = new Set<string>([comment.author]);
-
-    let directReplyCount = 0;
-    let childWeightedSum = 0;
-
-    for (const child of children) {
-        const analyzedChild = analyzeCommentNode(
-            child,
-            depth + 1,
-            currentRootId,
-            comment.id,
-            textCache
-        );
-        if (!analyzedChild) continue;
-
-        directReplyCount++;
-        childWeightedSum += analyzedChild.weightedSubtreeCount;
-        childMetadata.push(...analyzedChild.metadata);
-
-        for (const author of analyzedChild.authors) {
-            authors.add(author);
-        }
-    }
-
-    // Keep descendant count behavior consistent with existing scoring logic.
-    const descendantCount = childWeightedSum;
-
-    const meta: CommentMetadata = {
-        comment,
-        depth,
-        descendantCount,
-        directReplyCount,
-        textLength: strippedText.length,
-        strippedText,
-        uniqueAuthorCount: authors.size,
-        rootId: currentRootId,
-        parentId,
-        score: 0
+    | {
+        kind: 'exit';
+        agg: AnalyzeAggregate;
     };
-    meta.score = scoreComment(meta);
-
-    // Parent descendantCount logic expects this value to be (1 + child.descendantCount)
-    // for each direct child so parent can sum child weighted counts in one pass.
-    const weightedSubtreeCount = 1 + descendantCount;
-
-    return {
-        metadata: [meta, ...childMetadata],
-        weightedSubtreeCount,
-        authors
-    };
-}
 
 /**
  * Compute quality score for a comment based on structural signals
  */
 export function scoreComment(meta: CommentMetadata): number {
-    const descendantScore = 2.0 * Math.log(1 + meta.descendantCount);
-    const textScore = 1.0 * Math.log(1 + meta.textLength / 100);
-    const replyScore = 0.8 * meta.directReplyCount;
-    const authorScore = 0.3 * meta.uniqueAuthorCount;
+    const descendantScore = Math.min(meta.descendantCount, 80) * 0.08;
+    const textScore = Math.min(meta.textLength, 1200) * 0.002;
+    const replyScore = Math.min(meta.directReplyCount, 16) * 0.7;
     const depthPenalty = 0.8 * Math.max(0, meta.depth - 2);
 
     // Tie-breaker for stable ordering
     const tieBreaker = (meta.descendantCount * 0.001) + (meta.textLength * 0.00001);
 
-    return descendantScore + textScore + replyScore + authorScore - depthPenalty + tieBreaker;
+    return descendantScore + textScore + replyScore - depthPenalty + tieBreaker;
 }
 
 /**
- * Recursively analyze comment tree and build metadata for all comments
+ * Analyze comment tree and build metadata for all comments
  */
 function analyzeCommentTree(
     comments: Comment[],
-    depth: number = 0,
-    rootId: string | null = null,
-    parentId: string | null = null
+    limits: {
+        maxAnalyzedComments: number;
+        maxDepth: number;
+    }
 ): CommentMetadata[] {
     const results: CommentMetadata[] = [];
-    const textCache = new Map<string, string>();
+    const state: CommentAnalysisState = {
+        analyzedCount: 0,
+        maxAnalyzedComments: limits.maxAnalyzedComments,
+        maxDepth: limits.maxDepth
+    };
 
-    for (const comment of comments) {
-        const analyzed = analyzeCommentNode(comment, depth, rootId, parentId, textCache);
-        if (!analyzed) continue;
-        results.push(...analyzed.metadata);
+    for (const rootComment of comments) {
+        if (state.analyzedCount >= state.maxAnalyzedComments) {
+            break;
+        }
+
+        const stack: AnalyzeFrame[] = [
+            {
+                kind: 'enter',
+                comment: rootComment,
+                depth: 0,
+                rootId: null,
+                parentId: null
+            }
+        ];
+
+        while (stack.length > 0) {
+            const frame = stack.pop()!;
+
+            if (frame.kind === 'enter') {
+                if (frame.depth > state.maxDepth) {
+                    continue;
+                }
+
+                if (state.analyzedCount >= state.maxAnalyzedComments) {
+                    continue;
+                }
+
+                if (!frame.comment.text) {
+                    continue;
+                }
+
+                const strippedText = stripHtmlForScoring(frame.comment.text);
+                if (shouldSkipComment(frame.comment, strippedText)) {
+                    continue;
+                }
+
+                state.analyzedCount += 1;
+
+                const currentRootId = frame.rootId ?? frame.comment.id;
+                const aggregate: AnalyzeAggregate = {
+                    comment: frame.comment,
+                    depth: frame.depth,
+                    rootId: currentRootId,
+                    parentId: frame.parentId,
+                    textLength: strippedText.length,
+                    childMetadata: [],
+                    directReplyCount: 0,
+                    childWeightedSum: 0,
+                    parent: frame.parentAgg
+                };
+
+                stack.push({ kind: 'exit', agg: aggregate });
+
+                if (frame.depth < state.maxDepth && state.analyzedCount < state.maxAnalyzedComments) {
+                    const children = frame.comment.children || [];
+                    for (let i = children.length - 1; i >= 0; i--) {
+                        if (state.analyzedCount >= state.maxAnalyzedComments) {
+                            break;
+                        }
+
+                        const child = children[i];
+                        if (!child) continue;
+
+                        stack.push({
+                            kind: 'enter',
+                            comment: child,
+                            depth: frame.depth + 1,
+                            rootId: currentRootId,
+                            parentId: frame.comment.id,
+                            parentAgg: aggregate
+                        });
+                    }
+                }
+
+                continue;
+            }
+
+            const descendantCount = frame.agg.childWeightedSum;
+
+            const meta: CommentMetadata = {
+                comment: frame.agg.comment,
+                depth: frame.agg.depth,
+                descendantCount,
+                directReplyCount: frame.agg.directReplyCount,
+                textLength: frame.agg.textLength,
+                uniqueAuthorCount: 1,
+                rootId: frame.agg.rootId,
+                parentId: frame.agg.parentId,
+                score: 0
+            };
+            meta.score = scoreComment(meta);
+
+            // Parent descendantCount logic expects this value to be (1 + child.descendantCount)
+            // for each direct child so parent can sum child weighted counts in one pass.
+            const weightedSubtreeCount = 1 + descendantCount;
+
+            if (frame.agg.parent) {
+                frame.agg.parent.directReplyCount += 1;
+                frame.agg.parent.childWeightedSum += weightedSubtreeCount;
+                frame.agg.parent.childMetadata.push(meta, ...frame.agg.childMetadata);
+            } else {
+                results.push(meta, ...frame.agg.childMetadata);
+            }
+        }
     }
 
     return results;
@@ -809,32 +886,32 @@ function formatComment(
     comment: Comment,
     ancestors: Comment[],
     replies: Comment[],
-    strippedTextById: Map<string, string>
+    getFormattedText: (comment: Comment) => string
 ): string {
-    let result = '';
+    const lines: string[] = [];
 
     // Add ancestors for context (if deep comment)
     for (let i = 0; i < ancestors.length; i++) {
         const ancestor = ancestors[i];
         if (!ancestor) continue;
         const ancestorIndent = '  '.repeat(i);
-        const ancestorText = (strippedTextById.get(ancestor.id) || '').slice(0, 150);
-        result += `${ancestorIndent}[context] ${ancestor.author}: ${ancestorText}...\n`;
+        const ancestorText = getFormattedText(ancestor).slice(0, 150);
+        lines.push(`${ancestorIndent}[context] ${ancestor.author}: ${ancestorText}...`);
     }
 
     // Add main comment
     const mainIndent = '  '.repeat(ancestors.length);
-    const mainText = strippedTextById.get(comment.id) || '';
-    result += `${mainIndent}- ${comment.author}: ${mainText}\n`;
+    const mainText = getFormattedText(comment);
+    lines.push(`${mainIndent}- ${comment.author}: ${mainText}`);
 
     // Add best replies
     for (const reply of replies) {
         const replyIndent = '  '.repeat(ancestors.length + 1);
-        const replyText = strippedTextById.get(reply.id) || '';
-        result += `${replyIndent}- ${reply.author}: ${replyText}\n`;
+        const replyText = getFormattedText(reply);
+        lines.push(`${replyIndent}- ${reply.author}: ${replyText}`);
     }
 
-    return result;
+    return lines.join('\n') + '\n';
 }
 
 /**
@@ -849,37 +926,71 @@ export function selectAndFormatComments(
         return 'No comments available.';
     }
 
-    // Analyze entire tree
-    const allMetadata = analyzeCommentTree(comments);
+    const maxAnalyzedComments = options.maxAnalyzedComments ?? MAX_ANALYZED_COMMENTS_PER_STORY;
+    const maxDepth = options.maxDepth ?? MAX_COMMENT_DEPTH;
+    const perRootCap = Math.max(0, options.perRootCap || 0);
+
+    if (perRootCap === 0) {
+        return 'No comments available.';
+    }
+
+    // Analyze tree under hard budget limits
+    const allMetadata = analyzeCommentTree(comments, {
+        maxAnalyzedComments,
+        maxDepth
+    });
 
     if (allMetadata.length === 0) {
         return 'No comments available.';
     }
 
-    // Sort by score descending
-    const sorted = [...allMetadata].sort((a, b) => b.score - a.score);
+    // Keep only top comments per root in a single pass to reduce sort work.
+    const topPerRoot = new Map<string, CommentMetadata[]>();
+    for (const meta of allMetadata) {
+        const bucket = topPerRoot.get(meta.rootId) || [];
+        if (bucket.length === 0) {
+            bucket.push(meta);
+            topPerRoot.set(meta.rootId, bucket);
+            continue;
+        }
 
-    // Select comments with per-root diversity cap
-    const selected: CommentMetadata[] = [];
-    const rootCounts = new Map<string, number>();
+        let inserted = false;
+        for (let i = 0; i < bucket.length; i++) {
+            if (meta.score > bucket[i]!.score) {
+                bucket.splice(i, 0, meta);
+                inserted = true;
+                break;
+            }
+        }
+        if (!inserted && bucket.length < perRootCap) {
+            bucket.push(meta);
+        }
 
-    for (const meta of sorted) {
-        const rootCount = rootCounts.get(meta.rootId) || 0;
-        if (rootCount >= options.perRootCap) continue;
-
-        selected.push(meta);
-        rootCounts.set(meta.rootId, rootCount + 1);
+        if (bucket.length > perRootCap) {
+            bucket.length = perRootCap;
+        }
     }
 
+    const selected = Array.from(topPerRoot.values()).flat();
+    selected.sort((a, b) => b.score - a.score);
+
     // Format selected comments with budget enforcement
-    let result = '';
+    const formattedParts: string[] = [];
+    let currentLength = 0;
 
     // Pre-build indexes for O(1) lookups
     const metaById = new Map(allMetadata.map(m => [m.comment.id, m]));
-    const strippedTextById = new Map(allMetadata.map((m) => [
-        m.comment.id,
-        m.strippedText ?? stripHtml(m.comment.text)
-    ]));
+    const strippedTextById = new Map<string, string>();
+    const getFormattedText = (comment: Comment): string => {
+        const cached = strippedTextById.get(comment.id);
+        if (cached !== undefined) {
+            return cached;
+        }
+
+        const stripped = stripHtml(comment.text || '');
+        strippedTextById.set(comment.id, stripped);
+        return stripped;
+    };
     const topRepliesByParentId = new Map<string, [CommentMetadata | undefined, CommentMetadata | undefined]>();
 
     for (const m of allMetadata) {
@@ -911,17 +1022,19 @@ export function selectAndFormatComments(
         }
 
         // Format this comment thread
-        const formatted = formatComment(meta.comment, ancestors, replies, strippedTextById);
+        const formatted = formatComment(meta.comment, ancestors, replies, getFormattedText);
 
         // Check budget
-        if (result.length + formatted.length > options.maxChars) {
+        if (currentLength + formatted.length + 1 > options.maxChars) {
             break; // Budget exhausted
         }
 
-        result += formatted + '\n';
+        formattedParts.push(formatted);
+        currentLength += formatted.length + 1;
     }
 
-    return result.trim() || 'No comments available.';
+    const result = formattedParts.join('\n').trim();
+    return result || 'No comments available.';
 }
 
 // ============================================================================
@@ -1008,7 +1121,9 @@ export function buildSummaryPrompt(story: AlgoliaHit, comments: Comment[]): stri
     // Use scoring-based comment selection
     const commentText = selectAndFormatComments(comments, {
         maxChars: MAX_COMMENT_CHARS,
-        perRootCap: MAX_COMMENTS_PER_ROOT
+        perRootCap: MAX_COMMENTS_PER_ROOT,
+        maxAnalyzedComments: MAX_ANALYZED_COMMENTS_PER_STORY,
+        maxDepth: MAX_COMMENT_DEPTH
     });
 
     const contentDescription = isSelfPost
@@ -1113,68 +1228,7 @@ function normalizeSummaryText(text: string): string {
 }
 
 function normalizeDiscussionText(text: string): string {
-    let out = String(text || '').trim();
-    out = rewriteRoboticDiscussionLead(out);
-    return out;
-}
-
-function rewriteRoboticDiscussionLead(text: string): string {
-    let out = text.trim();
-
-    // Allow up to 2 adverbs between "discussion" and the verb.
-    const ADV = '(?:\\w+\\s+){0,2}';
-
-    const rules: Array<[RegExp, string]> = [
-        [/^the\s+hacker\s+news\s+discussion\s+centers\s+on\s+/i, 'Commenters focused on '],
-        [/^the\s+discussion\s+centers\s+on\s+/i, 'Commenters focused on '],
-        [/^the\s+hacker\s+news\s+discussion\s+centered\s+on\s+/i, 'Commenters focused on '],
-        [/^the\s+discussion\s+centered\s+on\s+/i, 'Commenters focused on '],
-        [/^the\s+hacker\s+news\s+discussion\s+centered\s+around\s+/i, 'Commenters focused on '],
-        [/^the\s+discussion\s+centered\s+around\s+/i, 'Commenters focused on '],
-        [/^the\s+hacker\s+news\s+discussion\s+revolves\s+around\s+/i, 'Commenters debated '],
-        [/^the\s+discussion\s+revolves\s+around\s+/i, 'Commenters debated '],
-        [/^the\s+hacker\s+news\s+discussion\s+revolved\s+around\s+/i, 'Commenters debated '],
-        [/^the\s+discussion\s+revolved\s+around\s+/i, 'Commenters debated '],
-        [/^the\s+hacker\s+news\s+discussion\s+highlights\s+/i, 'Commenters highlighted '],
-        [/^the\s+discussion\s+highlights\s+/i, 'Commenters highlighted '],
-        [/^the\s+hacker\s+news\s+discussion\s+highlighted\s+/i, 'Commenters highlighted '],
-        [/^the\s+discussion\s+highlighted\s+/i, 'Commenters highlighted '],
-        [/^the\s+hacker\s+news\s+discussion\s+dissected\s+/i, 'Commenters dissected '],
-        [/^the\s+discussion\s+dissected\s+/i, 'Commenters dissected '],
-        [/^the\s+hacker\s+news\s+discussion\s+is\s+about\s+/i, 'Commenters discussed '],
-        [/^the\s+discussion\s+is\s+about\s+/i, 'Commenters discussed '],
-        [/^the\s+hacker\s+news\s+discussion\s+focused\s+on\s+/i, 'Commenters focused on '],
-        [/^the\s+discussion\s+focused\s+on\s+/i, 'Commenters focused on '],
-
-        // Common generic openings
-        [/^the\s+hacker\s+news\s+discussion\s+reveals\s+/i, 'Commenters revealed '],
-        [/^the\s+discussion\s+reveals\s+/i, 'Commenters revealed '],
-        [/^the\s+hacker\s+news\s+discussion\s+shows\s+/i, 'Commenters showed '],
-        [/^the\s+discussion\s+shows\s+/i, 'Commenters showed '],
-        [/^the\s+hacker\s+news\s+discussion\s+discusses\s+/i, 'Commenters discussed '],
-        [/^the\s+discussion\s+discusses\s+/i, 'Commenters discussed '],
-        [new RegExp(`^the\\s+hacker\\s+news\\s+discussion\\s+${ADV}debated\\s+`, 'i'), 'Commenters debated '],
-        [new RegExp(`^the\\s+discussion\\s+${ADV}debated\\s+`, 'i'), 'Commenters debated '],
-        [new RegExp(`^the\\s+hacker\\s+news\\s+discussion\\s+${ADV}argued\\s+`, 'i'), 'Commenters argued '],
-        [new RegExp(`^the\\s+discussion\\s+${ADV}argued\\s+`, 'i'), 'Commenters argued '],
-        [new RegExp(`^the\\s+hacker\\s+news\\s+discussion\\s+${ADV}criticized\\s+`, 'i'), 'Commenters criticized '],
-        [new RegExp(`^the\\s+discussion\\s+${ADV}criticized\\s+`, 'i'), 'Commenters criticized '],
-        [new RegExp(`^the\\s+hacker\\s+news\\s+discussion\\s+${ADV}praised\\s+`, 'i'), 'Commenters praised '],
-        [new RegExp(`^the\\s+discussion\\s+${ADV}praised\\s+`, 'i'), 'Commenters praised '],
-        [new RegExp(`^the\\s+hacker\\s+news\\s+discussion\\s+${ADV}noted\\s+`, 'i'), 'Commenters noted '],
-        [new RegExp(`^the\\s+discussion\\s+${ADV}noted\\s+`, 'i'), 'Commenters noted ']
-    ];
-
-    for (const [pattern, replacement] of rules) {
-        if (pattern.test(out)) {
-            out = out.replace(pattern, replacement);
-            break;
-        }
-    }
-
-    // Guard against awkward results like "Commenters focused on ,".
-    out = out.replace(/\s+,/g, ',').trim();
-    return out;
+    return String(text || '').trim();
 }
 
 function normalizeComparableText(text: string): string {
