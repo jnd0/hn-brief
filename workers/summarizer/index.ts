@@ -278,11 +278,11 @@ async function repairStoriesForDate(env: Env, options: RepairOptions): Promise<v
     const candidates = createLLMConfigCandidates(env).map((candidate) => candidate.config);
     const replacements = new Map<string, ProcessedStory>();
 
-    for (const id of targetIds) {
+    await Promise.all(targetIds.map(async (id) => {
         const existing = storiesById.get(id);
         if (!existing) {
             console.log(`Story ${id} not found in ${articlePath}; skipping.`);
-            continue;
+            return;
         }
 
         try {
@@ -298,14 +298,14 @@ async function repairStoriesForDate(env: Env, options: RepairOptions): Promise<v
 
             if (needsStoryRepair(repaired)) {
                 console.log(`Story ${id} still low quality after fallback attempts; keeping existing text.`);
-                continue;
+                return;
             }
 
             replacements.set(id, repaired);
         } catch (error) {
             console.error(`Failed repairing story ${id}:`, error);
         }
-    }
+    }));
 
     let nextArticleContent = articleContent;
     if (replacements.size > 0) {
