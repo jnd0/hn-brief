@@ -1,0 +1,36 @@
+# HN Daily Digest - 2026-02-19
+
+1. The AI adoption story dominates with its Solow paradox framing, where 761-point discussion dissects why AI’s productivity lag mirrors 1970s IT despite cheap tools. Commenters like kace91 argue AI’s low cost should’ve accelerated gains, while others like agraxas claim subsidized access distorts value. The crux is whether AI automates tasks or creates new “bullshit jobs.” tabs_or_spaces notes AI’s value is trapped in personal workflows, not orgs, suggesting tools like GitHub Copilot might be transformative not for teams but solo devs. The debate mirrors Solow’s original tension—does investment precede productivity, or vice versa? Skeptics warn AI’s “full impact” might never materialize if adoption remains fragmented.  
+
+2. llms.txt’s efficacy is the next focus, sparked by Anna’s Archive’s poorly explained standard. reconnecting’s analysis shows major LLMs ignore the file, undermining its purpose. Yet hiccuphippo notes Bunny (Anthropic) adopts it, hinting industry adoption may follow. The thread splits into technical and ethical debates: Is llms.txt just a scraper magnet? streetfighter64 finds it creepy to address LLMs directly with donation pleas, comparing it to crypto miners. Meanwhile, theo_davis questions if data ownership even exists—scotty79 argues aggregation equals ownership, but knivets insists it’s a custodial role. The article’s Monero address and EU/German censorship angles add layers, showing how technical standards collide with activism and legal risks.  
+
+3. Microsoft’s Copilot bug exposing confidential emails is a privacy nightmare. SignalStackDev highlights the flawed design: AI bypasses DLP by fetching data pre-filters. This mirrors earlier critiques of AI vendors’ “advisory” language, where disclosures minimize liability. The discussion isn’t just about bugs but systemic negligence. Compare it to Meta’s security failures—both cases show how corporations externalize risk onto users. A recurring theme is that AI’s opacity makes accountability near-impossible. Even with opt-outs, the default path prioritizes extraction over consent.  
+
+4. Warren Buffett’s $1.7B Amazon dump signals distrust in retail’s future. Discussions contrast AWS’s margins (3% vs. 30% for cloud) with Amazon’s retail struggles. Commenters debate whether this is a structural shift or short-term profit-taking. Some argue Buffett’s move reflects era-overconfidence, others see it as prudent diversification. The irony? AWS thrives while retail stagnates, yet the split suggests capital isn’t flowing freely. It’s a microcosm of tech’s tension between scale and sustainability.  
+
+5. Chrome’s zero-day CSS vulnerability (CVE-2026-2441) underscores browser insecurity. The exploit leaks V8 heap pointers, enabling credential theft. Debates focus on bounty sizes—will $200K fix this?—and the term “zero-day,” now a misnomer for exploited flaws. Technical minds note sandbox escapes aren’t trivial, but the real issue is Chrome’s reliance on sanitizers that missed this. Critics blame languages; defenders point to Rust’s limitations. The real takeaway? Even “secure” ecosystems leak like sieves.  
+
+6. Let’s Encrypt’s DNS-PERSIST-01 simplifies certs but risks account correlation. The 10-day validation period vs. 398 days is a trade-off. Concerns arise about DNS records leaking identities, enabling attacks. Proponents argue it’s better than manual renewals, especially for legacy systems. Others prefer cryptographic solutions that don’t expose account details. The thread reflects infrastructure’s slow march toward simplicity, often at security’s expense.  
+
+7. DuckDB’s Shaper challenges Metabase with code-first dashboards. Critics compare it to outdated CR tools, but supporters praise DuckDB’s in-memory speed. The debate centers on whether read-only DB access is a relic or a valid model. AgharaShyam argues it’s obsolete with modern replicate streams, while conormccarter sees value in direct data access for AI agents. The article’s ability to handle 100GB on old hardware is a sweet spot for resource-constrained teams.  
+
+8. Asahi Linux’s M3 alpha is a triumph of open-source stubbornness. Six years of kernel work for Apple’s chips show relentless effort. Yet skeptics worry about sustainability—Apple’s closed ecosystem isn’t forgiving. The discussion nods to regulation; if Apple embraced Linux, progress would accelerate. Still, the project’s alpha status highlights the difficulty of reverse-engineering proprietary hardware.  
+
+9. Tailscale’s Peer Relays trade privacy for reliability. Critics lambast default data logging on mobile, calling it invasive. Defenders note core protocols are open, but the monetization model raises red flags. Comparing it to ZeroTier, users question if paid features will erode trust. The UDP advantage over TCP is clear, but relying on Tailscale’s infrastructure feels risky. It’s a classic security-profit trade-off.  
+
+10. Halt and Catch Fire’s obscurity frustrates fans. AMC+ exclusivity limits reach, unlike Netflix’s ubiquity. The discussion circles back to streaming fragmentation—a recurring theme in tech culture. Some defend the show’s accuracy, others mock its “tech bro” vibe. It’s a niche gem, but its survival on a paywall raises questions about cultural prioritization.  
+
+11. Meta’s security failures are on full display again. Zuckerberg’s testimony lies? Users cite Instagram’s mental health studies and unmoderated content. The debate isn’t just about lies but systemic profit-driven neglect. Regulation like Kids Online Safety Act seems inevitable, yet enforcement remains a pipe dream. Buffett’s Amazon dump and Meta’s woes both point to tech’s maturity crisis—when giants can’t innovate.  
+
+12. Microsoft’s Copilot bug is part of a larger AI liability trend. Discussions decry the “advisory” framing, seeing it as deliberate minimization. Pre-retrieval filtering is the only real solution, but deploying it requires rethinking architecture. The thread ties into broader AI ethics: if models are trained on user data by default, how can privacy survive? It’s a structural flaw, not a technical one.  
+
+13. The money moat argument dominates startup debates. Elliot Bonneville says LLMs erase technical barriers, leaving capital as the differentiator. Commenters counter with niche skills—tailoring, welding—but others argue AI commoditizes even those. The tension is between abundance (cheap AI) and scarcity (funding). Buffett’s Amazon move and Copilot’s bugs both hint at systems unsustainable long-term.  
+
+14. Fashion’s sizing chaos is a minor but telling example of market inefficiencies. The EU’s approach fails to address the root: subjective fit. Discussions blame brands for profit-driven shortcuts, while others accept it as inevitable. It’s a small-scale version of tech’s broader issues—optimization over user experience.  
+
+Worth watching? The AI productivity debate will fizzle unless adoption becomes universal. llms.txt’s fate depends on whether big tech adopts it organically. Copilot’s bug is a warning: AI’s risks aren’t just technical. For hardware, Asahi Linux’s M3 support could redefine Linux’s footprint on Apple devices.
+
+
+---
+
+*This digest summarizes the top 20 stories from Hacker News.*
