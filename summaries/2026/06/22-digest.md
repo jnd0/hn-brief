@@ -1,6 +1,6 @@
 # HN Daily Digest - 2026-06-22
 
-Please provide the top Hacker News stories and their individual summaries so I can craft the requested digest.
+Could you share the list of today’s top stories (or at least their brief summaries) so I can weave them into the digest?
 
 ---
 
