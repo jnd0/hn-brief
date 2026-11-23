@@ -36,6 +36,22 @@ export interface LLMLogger {
     error: (...args: any[]) => void;
 }
 
+export type LLMTraceScope =
+    | { operation: 'story'; storyId: string }
+    | { operation: 'digest' };
+
+/**
+ * Structured inference trace events. Events never contain the API key,
+ * request URL, or request headers.
+ */
+export type LLMTraceEvent =
+    | { type: 'request'; scope: LLMTraceScope; body: Record<string, unknown>; recordedAt: string }
+    | { type: 'response'; scope: LLMTraceScope; body: unknown; elapsedMs: number; recordedAt: string }
+    | { type: 'parsed'; scope: LLMTraceScope; body: unknown; qualityFailure: boolean; recordedAt: string }
+    | { type: 'error'; scope: LLMTraceScope; message: string; status?: number; body?: unknown; elapsedMs: number; recordedAt: string };
+
+export type LLMTraceSink = (event: LLMTraceEvent) => void | Promise<void>;
+
 export interface LLMConfigSelection {
     config: LLMConfig;
     provider: string;
@@ -323,9 +339,41 @@ function resolveThinkingParams(config: LLMConfig, defaultThinking: boolean): {
     };
 }
 
-async function buildApiError(response: Response): Promise<Error> {
+/**
+ * Error thrown when a trace sink fails. Rethrown past summarization error
+ * handling so a traced run fails instead of silently losing evidence.
+ */
+export class LLMTraceSinkError extends Error {
+    constructor(cause: unknown) {
+        super(`LLM trace sink failed: ${getErrorMessage(cause)}`);
+        this.name = 'LLMTraceSinkError';
+    }
+}
+
+async function emitTrace(trace: LLMTraceSink | undefined, event: LLMTraceEvent): Promise<void> {
+    if (!trace) return;
+    try {
+        await trace(event);
+    } catch (error) {
+        throw new LLMTraceSinkError(error);
+    }
+}
+
+function rethrowTraceSinkError(error: unknown): void {
+    if (error instanceof LLMTraceSinkError) throw error;
+}
+
+function parseJsonOrText(text: string): unknown {
+    try {
+        return JSON.parse(text);
+    } catch {
+        return text;
+    }
+}
+
+async function buildApiError(response: Response, bodyText?: string): Promise<Error> {
     const contentType = response.headers.get("content-type") || "";
-    const errorText = await response.text();
+    const errorText = bodyText ?? await response.text();
     let detail = errorText;
     if (contentType.includes("application/json")) {
         try {
@@ -394,9 +442,30 @@ async function fetchCompletionWithMeta(
     apiKey: string,
     body: Record<string, unknown>,
     fetcher?: FetchLike,
-    options?: { signal?: AbortSignal }
+    options?: { signal?: AbortSignal; scope?: LLMTraceScope; trace?: LLMTraceSink }
 ): Promise<{ content: string; finishReason?: string; nativeFinishReason?: string }> {
     const _fetch = fetcher || fetch;
+    const trace = options?.scope ? options.trace : undefined;
+    const scope = options?.scope;
+    const emitError = async (message: string, status?: number, errorBody?: unknown) => {
+        if (!trace || !scope) return;
+        await emitTrace(trace, {
+            type: 'error',
+            scope,
+            message,
+            ...(status !== undefined ? { status } : {}),
+            ...(errorBody !== undefined ? { body: errorBody } : {}),
+            elapsedMs: Date.now() - startedAt,
+            recordedAt: new Date().toISOString()
+        });
+    };
+
+    if (trace && scope) {
+        await emitTrace(trace, { type: 'request', scope, body, recordedAt: new Date().toISOString() });
+    }
+
+    // Measured after the request emit so slow sink writes don't inflate elapsedMs.
+    const startedAt = Date.now();
     const response = await _fetch(url, {
         method: "POST",
         headers: {
@@ -406,16 +475,56 @@ async function fetchCompletionWithMeta(
         },
         body: JSON.stringify(body),
         signal: options?.signal
+    }).catch(async (fetchError: unknown) => {
+        await emitError(getErrorMessage(fetchError));
+        throw fetchError;
     });
 
+    // Traced path only: a body read failure is recorded as an error event before it is rethrown.
+    const readTracedText = async (): Promise<string> => {
+        try {
+            return await response.text();
+        } catch (readError) {
+            await emitError(getErrorMessage(readError), response.status);
+            throw readError;
+        }
+    };
+
     if (!response.ok) {
-        throw await buildApiError(response);
+        if (!trace) {
+            throw await buildApiError(response);
+        }
+        const errorText = await readTracedText();
+        const apiError = await buildApiError(response, errorText);
+        await emitError(apiError.message, response.status, parseJsonOrText(errorText));
+        throw apiError;
     }
 
-    const data = await response.json() as any;
+    let data: any;
+    if (trace && scope) {
+        const responseText = await readTracedText();
+        try {
+            data = JSON.parse(responseText);
+        } catch (parseError) {
+            await emitError(getErrorMessage(parseError), response.status, responseText);
+            throw parseError;
+        }
+        await emitTrace(trace, {
+            type: 'response',
+            scope,
+            body: data,
+            elapsedMs: Date.now() - startedAt,
+            recordedAt: new Date().toISOString()
+        });
+    } else {
+        data = await response.json();
+    }
+
     if (data?.error) {
         const message = data.error?.message || data.error?.detail || JSON.stringify(data.error);
-        throw new Error(`API Error: ${truncateText(String(message), 500)}`);
+        const apiError = new Error(`API Error: ${truncateText(String(message), 500)}`);
+        await emitError(apiError.message, response.status, data);
+        throw apiError;
     }
 
     const choice = data?.choices?.[0];
@@ -1456,11 +1565,13 @@ export async function summarizeStory(
     comments: Comment[],
     config: LLMConfig,
     fetcher?: FetchLike,
-    logger?: LLMLogger
+    logger?: LLMLogger,
+    trace?: LLMTraceSink
 ): Promise<ProcessedStory> {
     const postType = detectPostType(story.title);
     const prompt = buildSummaryPrompt(story, comments);
     const logError = logger?.error || console.error;
+    const scope: LLMTraceScope = { operation: 'story', storyId: story.objectID };
 
     try {
         const useThinkingConfig = supportsThinkingConfig(config);
@@ -1518,7 +1629,9 @@ export async function summarizeStory(
             try {
                 // Avoid streaming (keeps Worker CPU lower); rely on stop sequences + timeouts instead.
                 const meta = await fetchCompletionWithMeta(config.apiUrl, config.apiKey, requestBody, fetcher, {
-                    signal: controller?.signal
+                    signal: controller?.signal,
+                    scope,
+                    trace
                 });
                 content = meta.content;
                 finishReason = meta.finishReason || meta.nativeFinishReason;
@@ -1533,7 +1646,10 @@ export async function summarizeStory(
                             `on ${config.model}; retrying with ${OPENROUTER_CONTENT_FILTER_FALLBACK_MODEL}...`
                         );
                         const retryBody = { ...requestBody, model: OPENROUTER_CONTENT_FILTER_FALLBACK_MODEL };
-                        const retryMeta = await fetchCompletionWithMeta(config.apiUrl, config.apiKey, retryBody, fetcher);
+                        const retryMeta = await fetchCompletionWithMeta(config.apiUrl, config.apiKey, retryBody, fetcher, {
+                            scope,
+                            trace
+                        });
                         content = retryMeta.content;
                         finishReason = retryMeta.finishReason || meta.nativeFinishReason;
                     }
@@ -1544,6 +1660,7 @@ export async function summarizeStory(
                 }
             }
         } catch (apiError: any) {
+            rethrowTraceSinkError(apiError);
             const errorMessage = getErrorMessage(apiError);
             const providerLabel = `${config.provider ?? 'unknown'}:${config.model}`;
 
@@ -1563,12 +1680,16 @@ export async function summarizeStory(
                     );
                     try {
                         const retryBody = { ...requestBody, model: OPENROUTER_CONTENT_FILTER_FALLBACK_MODEL };
-                        const retryMeta = await fetchCompletionWithMeta(config.apiUrl, config.apiKey, retryBody, fetcher);
+                        const retryMeta = await fetchCompletionWithMeta(config.apiUrl, config.apiKey, retryBody, fetcher, {
+                            scope,
+                            trace
+                        });
                         content = retryMeta.content;
                         finishReason = retryMeta.finishReason || retryMeta.nativeFinishReason;
 
                         // Continue through normal parsing path
                     } catch (retryError: any) {
+                        rethrowTraceSinkError(retryError);
                         const retryMessage = getErrorMessage(retryError);
                         logError(
                             `API error for "${story.title}" (${story.objectID}) ` +
@@ -1602,6 +1723,18 @@ export async function summarizeStory(
         }
 
         const parsed = parseSummaryResponse(content);
+        if (trace) {
+            await emitTrace(trace, {
+                type: 'parsed',
+                scope,
+                body: { summary: parsed.summary, discussion: parsed.discussion, finishReason },
+                qualityFailure: needsStoryRepair({
+                    summary: parsed.summary,
+                    discussion_summary: parsed.discussion
+                }),
+                recordedAt: new Date().toISOString()
+            });
+        }
 
         // Log if we got placeholder content like "..."
         if (parsed.summary === '...' || parsed.discussion === '...' || 
@@ -1627,6 +1760,7 @@ export async function summarizeStory(
             postType
         };
     } catch (e) {
+        rethrowTraceSinkError(e);
         logError(`Failed to summarize: ${story.title}`, e);
         return {
             id: story.objectID,
@@ -1710,6 +1844,7 @@ export async function processStoriesWithRateLimit(
         indent?: string;
         fetcher?: FetchLike;
         logger?: LLMLogger;
+        trace?: LLMTraceSink;
     }
 ): Promise<ProcessedStory[]> {
     const isNvidia = isNvidiaApi(llmConfig);
@@ -1719,7 +1854,8 @@ export async function processStoriesWithRateLimit(
         batchDelayMs = isNvidia ? 0 : 5000,
         indent = '',
         fetcher,
-        logger
+        logger,
+        trace
     } = options || {};
 
     const logInfo = logger?.info || console.log;
@@ -1737,14 +1873,17 @@ export async function processStoriesWithRateLimit(
         
         if (isNvidia) {
             // Nvidia NIM is typically latency-bound. Run each batch in parallel to fit within cron time limits.
-            const results = await Promise.all(
-                batch.map(({ hit, details }) => summarizeStory(hit, details.children || [], articleConfig, fetcher, logger))
+            // Settle every story before surfacing a failure so no story work is still running when the caller cleans up.
+            const settled = await Promise.allSettled(
+                batch.map(({ hit, details }) => summarizeStory(hit, details.children || [], articleConfig, fetcher, logger, trace))
             );
-            processedStories.push(...results);
+            const failed = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+            if (failed) throw failed.reason;
+            processedStories.push(...settled.map(r => (r as PromiseFulfilledResult<ProcessedStory>).value));
         } else {
             // Process sequentially with delay between each
             for (const { hit, details } of batch) {
-                const summary = await summarizeStory(hit, details.children || [], articleConfig, fetcher, logger);
+                const summary = await summarizeStory(hit, details.children || [], articleConfig, fetcher, logger, trace);
                 processedStories.push(summary);
 
                 // Small delay between stories to avoid overwhelming API
@@ -1771,9 +1910,11 @@ export async function processStoriesWithRateLimit(
 export async function generateDigest(
     stories: ProcessedStory[],
     config: LLMConfig,
-    fetcher?: FetchLike
+    fetcher?: FetchLike,
+    trace?: LLMTraceSink
 ): Promise<string> {
     const prompt = buildDigestPrompt(stories);
+    const scope: LLMTraceScope = { operation: 'digest' };
 
     try {
         const useThinkingConfig = supportsThinkingConfig(config);
@@ -1817,11 +1958,24 @@ export async function generateDigest(
         
         try {
             const content = (await fetchCompletionWithMeta(config.apiUrl, config.apiKey, requestBody, fetcher, {
-                signal: controller?.signal
+                signal: controller?.signal,
+                scope,
+                trace
             })).content;
+
+            if (trace) {
+                await emitTrace(trace, {
+                    type: 'parsed',
+                    scope,
+                    body: { content },
+                    qualityFailure: !content.trim(),
+                    recordedAt: new Date().toISOString()
+                });
+            }
 
             return content || "Digest generation failed (empty content).";
         } catch (apiError: any) {
+            rethrowTraceSinkError(apiError);
             const providerLabel = `${config.provider ?? 'unknown'}:${config.model}`;
             if (controller?.signal.aborted) {
                 console.error(`Digest API timeout [${providerLabel}] after 210000ms`);
@@ -1837,6 +1991,7 @@ export async function generateDigest(
         }
 
     } catch (e) {
+        rethrowTraceSinkError(e);
         console.error("Digest generation failed", e);
         return "Digest generation failed.";
     }

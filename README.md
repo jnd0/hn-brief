@@ -94,6 +94,10 @@ bun run summarize -- -r -d 2026-02-06 --id 46911869
 ```
 
 
+## Private local data pipeline
+
+A separate, private pipeline runs once a day in Podman and writes retained JSON, Markdown, and LLM traces to a host directory. Agents read `latest.json` in that directory to find the newest briefing. See [docs/local-data-pipeline.md](docs/local-data-pipeline.md) for setup, scheduling, failure inspection, and pruning. The upstream Cloudflare Worker documentation below still applies.
+
 ## Environment Variables
 
 | Variable | Description | Required |

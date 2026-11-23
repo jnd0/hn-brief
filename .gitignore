@@ -36,3 +36,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Cloudflare Worker environment variables
 .dev.vars
 .wrangler
+
+# Local data pipeline
+.env.pipeline
+/data/
