@@ -7,6 +7,7 @@
 
 import { mkdir } from "fs/promises";
 import {
+  type LLMConfig,
   type ProcessedStory,
   type AlgoliaHit,
   fetchTopStories,
@@ -57,8 +58,9 @@ const llmEnv = {
   LLM_THINKING: process.env.LLM_THINKING
 };
 
-const llmConfigCandidates = createLLMConfigCandidates(llmEnv).map((candidate) => candidate.config);
-const { config: llmConfig } = await resolveLLMConfigWithFallback(llmEnv, console);
+// Resolved in main() after --help is handled, so help works without API keys.
+let llmConfigCandidates: LLMConfig[] = [];
+let llmConfig!: LLMConfig;
 
 // ============================================================================
 // CLI Arguments
@@ -420,6 +422,9 @@ async function main() {
     showHelp();
     return;
   }
+
+  llmConfigCandidates = createLLMConfigCandidates(llmEnv).map((candidate) => candidate.config);
+  ({ config: llmConfig } = await resolveLLMConfigWithFallback(llmEnv, console));
 
   if (options.repair) {
     const repairDateValue = options.date || getLondonDate();

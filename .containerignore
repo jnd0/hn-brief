@@ -1,0 +1,9 @@
+.git
+.amp
+node_modules
+data
+summaries
+.env
+.env.*
+!.env.example
+!.env.pipeline.example

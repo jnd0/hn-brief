@@ -6,6 +6,7 @@
   "license": "MIT",
   "scripts": {
     "summarize": "bun run scripts/summarizer.ts",
+    "pipeline": "bun run scripts/pipeline/cli.ts",
     "probe-llm": "bun run scripts/probe-llm.ts"
   },
   "devDependencies": {
